@@ -647,10 +647,10 @@ export default function Dashboard() {
             )}
           </div>
 
-          <SectionHeader eyebrow="Reach" title="How far content traveled" note="De-duplicated at the account level, by content type. Still sums across days in the range, so multi-day overlap isn't removed. Story is excluded." />
+          <SectionHeader eyebrow="Reach" title="How far content traveled" note="De-duplicated at the account level. Still sums across days in the range, so multi-day overlap isn't removed. The Reels/Posts breakdown excludes Stories; the total does not — see each card's info icon." />
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 30 }}>
             {hasAccountReach && (
-              <KpiCard icon={Users} label="Distinct accounts reached" value={fmt(agg(daily, "accountReach", "sum"))} delta={pct(agg(daily, "accountReach", "sum"), agg(prevDaily, "accountReach", "sum"))} description="Meta's own de-duplicated daily reach, summed across the range — unlike summing each post's own reach, this doesn't double-count anyone who saw more than one post." />
+              <KpiCard icon={Users} label="Total distinct reach (all content, incl. Stories)" value={fmt(agg(daily, "accountReach", "sum"))} delta={pct(agg(daily, "accountReach", "sum"), agg(prevDaily, "accountReach", "sum"))} description="Meta's own de-duplicated daily reach across everything — Reels, Posts, and Stories combined — summed across the range. Unlike summing each post's own reach, this doesn't double-count anyone who saw more than one piece of content. Not directly comparable to 'Distinct reach — Reels/Posts' below: those exclude Stories, and de-duplicated numbers don't add up across categories (anyone who saw more than one content type is counted once per category, so the parts sum to more than this whole)." />
             )}
             {hasDedupReachByType && (
               <>
