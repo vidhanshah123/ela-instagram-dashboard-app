@@ -18,7 +18,8 @@ const T = {
 const facet = (s = 10) => ({
   clipPath: `polygon(${s}px 0, 100% 0, 100% calc(100% - ${s}px), calc(100% - ${s}px) 100%, 0 100%, 0 ${s}px)`,
 });
-const PALETTE = ["#CBA35C", "#5C7FA6", "#5E9B7A", "#C08A72", "#B69AC7", "#D4A94E", "#8FA6C2", "#A98F6B"];
+// Validated categorical palette (CVD-safe, fixed order — never cycled/re-sorted per instance).
+const PALETTE = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"];
 
 /* ============ METRIC / DIMENSION REGISTRY ============
    Everything here is genuinely live now — data comes from the real
@@ -37,6 +38,21 @@ const DIMENSION_FIELDS = [
   { key: "topic", label: "Topic" },
   { key: "hashtags", label: "Hashtags" },
   { key: "date", label: "Date" },
+];
+// Client-only starter presets — shown until the user has saved their own views.
+const SUGGESTED_VIEWS = [
+  {
+    name: "Top Reels — last 30 days",
+    config: { search: "", topicFilter: [], typeFilter: "Reel", preset: "30d", explorerDims: ["topic"], explorerMetrics: ["likes", "comments", "plays", "engagement"], explorerSort: { key: "engagement", dir: "desc" } },
+  },
+  {
+    name: "All posts by topic",
+    config: { search: "", topicFilter: [], typeFilter: "All", preset: "all", explorerDims: ["topic", "date"], explorerMetrics: ["likes", "comments", "engagement"], explorerSort: { key: "topic", dir: "asc" } },
+  },
+  {
+    name: "This week's activity",
+    config: { search: "", topicFilter: [], typeFilter: "All", preset: "7d", explorerDims: ["date", "topic"], explorerMetrics: ["likes", "comments", "shares", "saves"], explorerSort: { key: "date", dir: "desc" } },
+  },
 ];
 
 /* ============ HELPERS ============ */
@@ -204,6 +220,11 @@ function Cover({ url, color }) {
 }
 function TypeIcon({ type, size = 10 }) { return type === "Reel" ? <Video size={size} /> : <ImageIcon size={size} />; }
 
+/* ============ URL STATE (shareable/bookmarkable filters) ============ */
+function readUrlParams() {
+  return new URLSearchParams(window.location.search);
+}
+
 /* ============ MAIN ============ */
 export default function Dashboard() {
   const [loading, setLoading] = useState(true);
@@ -215,15 +236,17 @@ export default function Dashboard() {
   const [savedViews, setSavedViews] = useState([]);
 
   const [range, setRange] = useState(null);
-  const [preset, setPreset] = useState("all");
-  const [tab, setTab] = useState("overview");
-  const [typeFilter, setTypeFilter] = useState("All");
-  const [search, setSearch] = useState("");
-  const [topicFilter, setTopicFilter] = useState([]);
+  const [preset, setPreset] = useState(() => readUrlParams().get("range") || "all");
+  const [tab, setTab] = useState(() => readUrlParams().get("tab") || "overview");
+  const [typeFilter, setTypeFilter] = useState(() => readUrlParams().get("type") || "All");
+  const [search, setSearch] = useState(() => readUrlParams().get("q") || "");
+  const [topicFilter, setTopicFilter] = useState(() => {
+    const t = readUrlParams().get("topics");
+    return t ? t.split(",") : [];
+  });
   const [expandedTopics, setExpandedTopics] = useState([]);
   const [explorerMetrics, setExplorerMetrics] = useState(["likes", "comments", "plays", "engagement"]);
   const [explorerDims, setExplorerDims] = useState(["topic"]);
-  const [explorerTypes, setExplorerTypes] = useState(["Reel", "Post"]);
   const [topicSort, setTopicSort] = useState({ key: "avgEngagement", dir: "desc" });
   const [explorerSort, setExplorerSort] = useState({ key: "date", dir: "desc" });
   const [editingCat, setEditingCat] = useState(null);
@@ -234,6 +257,9 @@ export default function Dashboard() {
   const [editingView, setEditingView] = useState(null);
   const [activeViewId, setActiveViewId] = useState(null);
   const [confirmDeleteView, setConfirmDeleteView] = useState(null);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [bulkCatId, setBulkCatId] = useState("");
+  const [activeSuggestion, setActiveSuggestion] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -254,11 +280,33 @@ export default function Dashboard() {
         setCategories(catRes.data ?? []);
         setSavedViews(viewsRes.data ?? []);
 
+        const params = readUrlParams();
+        const viewId = params.get("view");
+        const view = viewId ? (viewsRes.data ?? []).find((v) => v.id === viewId) : null;
+        let effectivePreset = view?.config?.preset || params.get("range") || "all";
+        if (view) {
+          const cfg = view.config ?? {};
+          setSearch(cfg.search ?? "");
+          setTopicFilter(cfg.topicFilter ?? []);
+          setTypeFilter(cfg.typeFilter ?? "All");
+          setExplorerDims(cfg.explorerDims ?? ["topic"]);
+          setExplorerMetrics(cfg.explorerMetrics ?? ["likes", "comments", "plays", "engagement"]);
+          setExplorerSort(cfg.explorerSort ?? { key: "date", dir: "desc" });
+          setActiveViewId(view.id);
+        }
+
         const dates = (contentRes.data ?? []).map((r) => r.post_date);
         if (dates.length) {
           const minDate = dates.reduce((a, b) => (b < a ? b : a));
           const maxDate = dates.reduce((a, b) => (b > a ? b : a));
-          setRange(presetRange("all", minDate, maxDate));
+          const urlStart = params.get("start"), urlEnd = params.get("end");
+          if (!view && urlStart && urlEnd) {
+            setRange({ start: urlStart, end: urlEnd });
+            setPreset("custom");
+          } else {
+            setPreset(effectivePreset);
+            setRange(presetRange(effectivePreset, minDate, maxDate));
+          }
         }
       } catch (e) {
         setLoadError(e.message || "Failed to load dashboard data");
@@ -268,6 +316,26 @@ export default function Dashboard() {
     })();
   }, []);
 
+  // Keep the URL in sync so filters/tab/view are shareable and survive a refresh.
+  useEffect(() => {
+    if (!range) return;
+    const params = new URLSearchParams();
+    if (tab !== "overview") params.set("tab", tab);
+    if (typeFilter !== "All") params.set("type", typeFilter);
+    if (preset === "custom") {
+      params.set("start", range.start);
+      params.set("end", range.end);
+    } else if (preset !== "all") {
+      params.set("range", preset);
+    }
+    if (activeViewId) params.set("view", activeViewId);
+    if (search) params.set("q", search);
+    if (topicFilter.length) params.set("topics", topicFilter.join(","));
+    const qs = params.toString();
+    const url = qs ? `${window.location.pathname}?${qs}` : window.location.pathname;
+    window.history.replaceState(null, "", url);
+  }, [tab, typeFilter, preset, range, activeViewId, search, topicFilter]);
+
   const content = useMemo(() => rawContent.map((r) => mapContentRow(r, categories)), [rawContent, categories]);
   const MIN_DATE = useMemo(() => (content.length ? content.reduce((a, p) => (p.date < a ? p.date : a), content[0].date) : null), [content]);
   const MAX_DATE = useMemo(() => (content.length ? content.reduce((a, p) => (p.date > a ? p.date : a), content[0].date) : null), [content]);
@@ -276,6 +344,14 @@ export default function Dashboard() {
     setRawContent((rows) => rows.map((r) => (r.id === contentId ? { ...r, category_id: catId } : r)));
     const { error } = await supabase.from("content").update({ category_id: catId }).eq("id", contentId);
     if (error) console.error("Failed to reassign category:", error.message);
+  };
+  const bulkReassign = async (ids, catId) => {
+    if (!ids.length || !catId) return;
+    setRawContent((rows) => rows.map((r) => (ids.includes(r.id) ? { ...r, category_id: catId } : r)));
+    const { error } = await supabase.from("content").update({ category_id: catId }).in("id", ids);
+    if (error) console.error("Failed to bulk reassign category:", error.message);
+    setSelectedIds([]);
+    setBulkCatId("");
   };
   const renameCategory = async (id, name) => {
     setCategories((cats) => cats.map((c) => (c.id === id ? { ...c, name } : c)));
@@ -293,14 +369,15 @@ export default function Dashboard() {
     setNewCatName("");
   };
 
-  const currentExplorerConfig = () => ({ search, topicFilter, explorerTypes, explorerDims, explorerMetrics, explorerSort });
+  const currentExplorerConfig = () => ({ search, topicFilter, typeFilter, preset, explorerDims, explorerMetrics, explorerSort });
   const applyExplorerConfig = (cfg) => {
     setSearch(cfg.search ?? "");
     setTopicFilter(cfg.topicFilter ?? []);
-    setExplorerTypes(cfg.explorerTypes ?? ["Reel", "Post"]);
+    setTypeFilter(cfg.typeFilter ?? "All");
     setExplorerDims(cfg.explorerDims ?? ["topic"]);
     setExplorerMetrics(cfg.explorerMetrics ?? ["likes", "comments", "plays", "engagement"]);
     setExplorerSort(cfg.explorerSort ?? { key: "date", dir: "desc" });
+    if (cfg.preset) { setPreset(cfg.preset); setRange(presetRange(cfg.preset, MIN_DATE, MAX_DATE)); }
   };
   const createView = async (name) => {
     if (!name.trim()) return;
@@ -310,7 +387,8 @@ export default function Dashboard() {
     setActiveViewId(data.id);
     setNewViewName("");
   };
-  const loadView = (view) => { applyExplorerConfig(view.config); setActiveViewId(view.id); };
+  const loadView = (view) => { applyExplorerConfig(view.config); setActiveViewId(view.id); setActiveSuggestion(null); };
+  const loadSuggestion = (sv) => { applyExplorerConfig(sv.config); setActiveViewId(null); setActiveSuggestion(sv.name); };
   const updateView = async (id) => {
     const config = currentExplorerConfig();
     setSavedViews((v) => v.map((sv) => (sv.id === id ? { ...sv, config } : sv)));
@@ -352,14 +430,13 @@ export default function Dashboard() {
   const accSum = (key) => ({ now: agg(daily, key, "sum"), prev: agg(prevDaily, key, "sum") });
 
   const filtered = useMemo(() => posts.filter((p) => {
-    if (!explorerTypes.includes(p.contentType)) return false;
     if (topicFilter.length && !topicFilter.includes(p.catId)) return false;
     if (search) {
       const q = search.toLowerCase();
       if (!p.caption.toLowerCase().includes(q) && !p.hashtags.join(" ").toLowerCase().includes(q) && !p.topic.toLowerCase().includes(q)) return false;
     }
     return true;
-  }), [posts, topicFilter, search, explorerTypes]);
+  }), [posts, topicFilter, search]);
 
   const topicRows = useMemo(() => {
     const g = {};
@@ -381,6 +458,10 @@ export default function Dashboard() {
     const dimTypes = { topic: "string", hashtags: "string", date: "string", caption: "string", contentType: "string" };
     return sortRows(filtered, explorerSort, dimTypes);
   }, [filtered, explorerSort]);
+  const visibleIds = useMemo(() => sortedFiltered.map((p) => p.id), [sortedFiltered]);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
+  const toggleSelectAllVisible = () => setSelectedIds(allVisibleSelected ? [] : visibleIds);
+  const toggleSelectRow = (id) => setSelectedIds((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
 
   const topContent = useMemo(() => [...filtered].sort((a, b) => b.engagement - a.engagement).slice(0, 8), [filtered]);
   const presets = [["7d", "Last week"], ["30d", "Last month"], ["3m", "Last 3 months"], ["all", "All time"]];
@@ -463,16 +544,22 @@ export default function Dashboard() {
 
           <SectionHeader eyebrow="Audience" title="Follower count history" />
           <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 6px", marginBottom: 30, ...facet(10) }}>
-            <ResponsiveContainer width="100%" height={200}>
-              <AreaChart data={daily}>
-                <defs><linearGradient id="fg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={T.gold} stopOpacity={0.35} /><stop offset="100%" stopColor={T.gold} stopOpacity={0} /></linearGradient></defs>
-                <CartesianGrid stroke={T.line} vertical={false} />
-                <XAxis dataKey="date" tick={{ fontSize: 10, fill: T.muted }} axisLine={{ stroke: T.line }} tickLine={false} minTickGap={40} />
-                <YAxis tick={{ fontSize: 10, fill: T.muted }} axisLine={false} tickLine={false} width={44} domain={["dataMin - 20", "dataMax + 20"]} />
-                <Tooltip content={<Tip />} />
-                <Area type="monotone" dataKey="followers" name="Followers" stroke={T.gold} fill="url(#fg)" strokeWidth={2} />
-              </AreaChart>
-            </ResponsiveContainer>
+            {daily.length < 2 ? (
+              <div style={{ height: 200, display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: 12, textAlign: "center", padding: "0 20px" }}>
+                Not enough history yet — check back after a few more days of data.
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={200}>
+                <AreaChart data={daily}>
+                  <defs><linearGradient id="fg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={T.gold} stopOpacity={0.35} /><stop offset="100%" stopColor={T.gold} stopOpacity={0} /></linearGradient></defs>
+                  <CartesianGrid stroke={T.line} vertical={false} />
+                  <XAxis dataKey="date" tick={{ fontSize: 10, fill: T.muted }} axisLine={{ stroke: T.line }} tickLine={false} minTickGap={40} />
+                  <YAxis tick={{ fontSize: 10, fill: T.muted }} axisLine={false} tickLine={false} width={44} domain={["dataMin - 20", "dataMax + 20"]} />
+                  <Tooltip content={<Tip />} />
+                  <Area type="monotone" dataKey="followers" name="Followers" stroke={T.gold} fill="url(#fg)" strokeWidth={2} />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
           </div>
 
           <SectionHeader eyebrow="Reach" title="How far content traveled" note="Aggregated across all content in the selected date range." />
@@ -625,11 +712,6 @@ export default function Dashboard() {
                 <Chip key={d.key} active={explorerDims.includes(d.key)} onClick={() => setExplorerDims((s) => s.includes(d.key) ? s.filter((x) => x !== d.key) : [...s, d.key])}>{d.label}</Chip>
               ))}
             </div>
-            <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 14 }}>
-              {["Reel", "Post"].map((t) => (
-                <Chip key={t} active={explorerTypes.includes(t)} onClick={() => setExplorerTypes((s) => s.includes(t) ? (s.length > 1 ? s.filter((x) => x !== t) : s) : [...s, t])}>{t}</Chip>
-              ))}
-            </div>
             <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 9, fontSize: 11.5, color: T.muted }}><Sliders size={13} color={T.gold} /> Metrics</div>
             <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
               {METRICS.map((m) => (
@@ -643,11 +725,20 @@ export default function Dashboard() {
           <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "14px 16px", marginBottom: 14, ...facet(9) }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: viewsOpen ? 12 : 0 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, color: T.muted }}>
-                <FolderOpen size={13} color={T.gold} /> Saved views{activeViewId && ` — viewing "${savedViews.find((v) => v.id === activeViewId)?.name}"`}
+                <FolderOpen size={13} color={T.gold} /> Saved views
+                {activeViewId && ` — viewing "${savedViews.find((v) => v.id === activeViewId)?.name}"`}
+                {!activeViewId && activeSuggestion && ` — viewing "${activeSuggestion}"`}
               </div>
               <button onClick={() => setViewsOpen((s) => !s)} style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.muted, padding: "5px 10px", fontSize: 11, cursor: "pointer", borderRadius: 3 }}>
                 {viewsOpen ? "Hide" : "Manage views"}
               </button>
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", marginTop: 10 }}>
+              <span style={{ fontSize: 10.5, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" }}>Quick views</span>
+              {SUGGESTED_VIEWS.map((sv) => (
+                <Chip key={sv.name} active={activeSuggestion === sv.name} onClick={() => loadSuggestion(sv)}>{sv.name}</Chip>
+              ))}
             </div>
 
             {viewsOpen && (
@@ -686,16 +777,30 @@ export default function Dashboard() {
             )}
           </div>
 
+          {selectedIds.length > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, background: "rgba(203,163,92,0.1)", border: `1px solid ${T.gold}`, padding: "9px 14px", marginBottom: 10, ...facet(7) }}>
+              <span style={{ fontSize: 12, color: T.ivory, fontWeight: 600 }}>{selectedIds.length} selected</span>
+              <select value={bulkCatId} onChange={(e) => setBulkCatId(e.target.value)} style={{ fontSize: 11.5, padding: "5px 8px", background: T.surface2, color: T.ivory, border: `1px solid ${T.line}`, borderRadius: 3 }}>
+                <option value="">Move to…</option>
+                {categories.map((c) => <option key={c.id} value={c.id} style={{ background: T.surface, color: T.ivory }}>{c.name}</option>)}
+              </select>
+              <button onClick={() => bulkReassign(selectedIds, bulkCatId)} disabled={!bulkCatId} style={{ background: bulkCatId ? T.gold : T.line, border: "none", color: T.bg, padding: "5px 12px", fontSize: 11.5, fontWeight: 600, cursor: bulkCatId ? "pointer" : "not-allowed", borderRadius: 3 }}>Apply</button>
+              <button onClick={() => setSelectedIds([])} style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.muted, padding: "5px 10px", fontSize: 11.5, cursor: "pointer", borderRadius: 3 }}>Clear</button>
+            </div>
+          )}
+
           <div style={{ background: T.surface, border: `1px solid ${T.line}`, overflowX: "auto", ...facet(10) }}>
             <table style={{ fontSize: 11.5 }}>
               <thead><tr style={{ borderBottom: `1px solid ${T.line}`, color: T.muted, fontSize: 10, textTransform: "uppercase" }}>
+                <th style={{ padding: "10px 12px" }}><input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAllVisible} style={{ cursor: "pointer" }} /></th>
                 <Th label="Type" sortKey="contentType" sort={explorerSort} setSort={setExplorerSort} />
                 {explorerDims.map((dk) => <Th key={dk} label={DIMENSION_FIELDS.find((d) => d.key === dk)?.label} sortKey={dk} sort={explorerSort} setSort={setExplorerSort} />)}
                 <Th label="Caption" sortKey="caption" sort={explorerSort} setSort={setExplorerSort} />
                 {explorerMetrics.map((mk) => { const m = METRICS.find((x) => x.key === mk); return <Th key={mk} label={m.label} sortKey={mk} sort={explorerSort} setSort={setExplorerSort} align="right" />; })}
               </tr></thead>
               <tbody>{sortedFiltered.map((p) => (
-                <tr key={p.id} style={{ borderBottom: `1px solid ${T.line}` }}>
+                <tr key={p.id} style={{ borderBottom: `1px solid ${T.line}`, background: selectedIds.includes(p.id) ? "rgba(203,163,92,0.06)" : "transparent" }}>
+                  <td style={{ padding: "8px 12px" }}><input type="checkbox" checked={selectedIds.includes(p.id)} onChange={() => toggleSelectRow(p.id)} style={{ cursor: "pointer" }} /></td>
                   <td style={{ padding: "8px 12px", color: T.muted, whiteSpace: "nowrap" }}><span style={{ display: "flex", alignItems: "center", gap: 4 }}><TypeIcon type={p.contentType} size={10} />{p.contentType}</span></td>
                   {explorerDims.map((dk) => (
                     <td key={dk} style={{ padding: "8px 12px", color: T.muted, whiteSpace: "nowrap" }}>
