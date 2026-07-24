@@ -34,6 +34,9 @@ const METRICS = [
   { key: "avgWatchTimeMs", label: "Avg watch time (ms)", agg: "avg", icon: Clock, description: "Average milliseconds watched per view. Reels only. Graph API returns this in milliseconds, not a percentage." },
   { key: "totalWatchTimeMs", label: "Total watch time (ms)", agg: "sum", icon: Clock, description: "Cumulative milliseconds watched across all viewers, including replays. Reels only — a stronger 'held attention' signal than the average when comparing reels with very different view counts." },
   { key: "reelsSkipRate", label: "Skip rate (%, first 3s)", agg: "avg", icon: TrendingDown, description: "Percentage of views that skipped this reel within the first 3 seconds, out of all initial views. Reels only — a hook-quality signal: lower is better." },
+  { key: "profileVisits", label: "Profile visits", agg: "sum", icon: Users, description: "Number of times the profile was visited after engaging with this post. Posts only — Reels don't support this metric." },
+  { key: "profileActivity", label: "Profile actions", agg: "sum", icon: ExternalLink, description: "Combined total of all actions taken on the profile after visiting from this post (bio-link taps, calls, emails, direction requests). Meta's documented per-action breakdown doesn't actually return broken-out data for this account, so this is the combined total, not bio-link clicks specifically. Posts only." },
+  { key: "newFollowers", label: "New followers", agg: "sum", icon: TrendingUp, description: "New followers attributed to this specific post. Posts only — Reels don't support this metric." },
   { key: "engagement", label: "Total interactions", agg: "sum", icon: TrendingUp, description: "Likes + saves + comments + shares, minus unlikes/unsaves/deleted comments. Graph API's native total_interactions field." },
 ];
 // ISO 3166-1 alpha-2 -> display name, for the audience_snapshots country breakdown.
@@ -132,6 +135,9 @@ function mapContentRow(row, categories) {
     avgWatchTimeMs: row.avg_watch_time_ms,
     totalWatchTimeMs: row.total_watch_time_ms,
     reelsSkipRate: row.reels_skip_rate,
+    profileVisits: row.profile_visits,
+    profileActivity: row.profile_activity,
+    newFollowers: row.new_followers,
     engagement: row.total_interactions ?? 0,
     cover: row.cover_url,
     permalink: row.permalink,
