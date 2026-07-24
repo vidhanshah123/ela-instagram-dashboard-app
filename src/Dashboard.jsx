@@ -2,12 +2,14 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from "
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip, Cell,
+  ScatterChart, Scatter, ZAxis, Legend,
 } from "recharts";
 import {
   TrendingUp, TrendingDown, Heart, MessageCircle, Eye, Clock, Gem,
   Calendar, Video, Image as ImageIcon, Search, X, Info, Users,
   Share2, Bookmark, ChevronRight, ChevronDown,
   Pencil, Plus, Check, Sliders, Columns, Save, Trash2, RotateCcw, FolderOpen, ExternalLink,
+  EyeOff, Flame, Award, AlertTriangle,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 
@@ -41,6 +43,16 @@ const METRICS = [
 ];
 // ISO 3166-1 alpha-2 -> display name, for the audience_snapshots country breakdown.
 // Not exhaustive — falls back to the raw code for anything not listed here.
+const WEEKDAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MILESTONE_STEPS = [100, 250, 500, 1000, 2500, 5000, 10000, 25000, 50000, 100000, 250000, 500000, 1000000];
+// Monday-start week bucket key for a "YYYY-MM-DD" date string, computed via
+// getUTCDay() (not getDay()) so it's timezone-safe like fmtDate.
+function weekStartOf(dateStr) {
+  const d = new Date(dateStr + "T00:00:00Z");
+  const dow = d.getUTCDay(); // 0=Sun..6=Sat
+  d.setUTCDate(d.getUTCDate() - dow);
+  return d.toISOString().slice(0, 10);
+}
 const COUNTRY_NAMES = {
   US: "United States", IN: "India", GB: "United Kingdom", CA: "Canada", AU: "Australia",
   DE: "Germany", FR: "France", NO: "Norway", NL: "Netherlands", SE: "Sweden",
@@ -66,6 +78,31 @@ const SUGGESTED_VIEWS = [
     name: "This week's activity",
     config: { search: "", topicFilter: [], typeFilter: "All", preset: "7d", explorerDims: ["date", "topic"], explorerMetrics: ["likes", "comments", "shares", "saves"], explorerSort: { key: "date", dir: "desc" } },
   },
+];
+// Every hideable visual, for the "Manage hidden" restore panel — the
+// single source of truth for id -> human label across both tabs.
+const VISUAL_REGISTRY = [
+  { id: "net-follower-bars", tab: "Overview", label: "Net follower change" },
+  { id: "views-trend", tab: "Overview", label: "Views over time" },
+  { id: "engagement-rate", tab: "Overview", label: "Engagement rate" },
+  { id: "new-followers-content", tab: "Overview", label: "New followers from content" },
+  { id: "profile-funnel", tab: "Overview", label: "Profile funnel" },
+  { id: "best-day-of-week", tab: "Overview", label: "Best day to post" },
+  { id: "content-mix-trend", tab: "Overview", label: "Content mix over time" },
+  { id: "rewatch-index", tab: "Overview", label: "Rewatch index" },
+  { id: "audience-drift", tab: "Overview", label: "Audience composition over time" },
+  { id: "bio-link-funnel-trend", tab: "Overview", label: "Profile funnel trend" },
+  { id: "posting-streak", tab: "Overview", label: "Posting consistency" },
+  { id: "follower-milestone", tab: "Overview", label: "Follower milestone" },
+  { id: "skip-rate-leaderboard", tab: "Content", label: "Skip rate leaderboard" },
+  { id: "top-posts-new-followers", tab: "Content", label: "Top posts by new followers" },
+  { id: "watch-time-efficiency", tab: "Content", label: "Watch-time efficiency" },
+  { id: "hashtag-performance", tab: "Content", label: "Hashtag performance" },
+  { id: "duration-scatter", tab: "Content", label: "Reel duration vs. performance" },
+  { id: "category-sparklines", tab: "Content", label: "Category trend sparklines (Topics table column)" },
+  { id: "category-momentum", tab: "Content", label: "Category momentum (Topics table column)" },
+  { id: "underperformer-flag", tab: "Content", label: "Needs attention (underperformers)" },
+  { id: "category-matrix", tab: "Content", label: "Category × content type matrix" },
 ];
 
 /* ============ HELPERS ============ */
@@ -135,6 +172,7 @@ function mapContentRow(row, categories) {
     avgWatchTimeMs: row.avg_watch_time_ms,
     totalWatchTimeMs: row.total_watch_time_ms,
     reelsSkipRate: row.reels_skip_rate,
+    durationS: row.duration_s,
     profileVisits: row.profile_visits,
     profileActivity: row.profile_activity,
     newFollowers: row.new_followers,
@@ -209,14 +247,53 @@ function KpiCard({ icon: Icon, label, value, delta, description }) {
     </div>
   );
 }
-function SectionHeader({ eyebrow, title, note }) {
+function SectionHeader({ eyebrow, title, note, right }) {
   return (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 14, gap: 12, flexWrap: "wrap" }}>
       <div>
         <div style={{ fontSize: 10.5, letterSpacing: "0.14em", textTransform: "uppercase", color: T.gold, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}><span style={{ width: 14, height: 1, background: T.gold }} />{eyebrow}</div>
         <h2 style={{ fontFamily: "'Fraunces', serif", fontWeight: 500, fontSize: 20, color: T.ivory, margin: 0 }}>{title}</h2>
       </div>
-      {note && <div style={{ fontSize: 11.5, color: T.muted, maxWidth: 340, textAlign: "right" }}>{note}</div>}
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 10 }}>
+        {note && <div style={{ fontSize: 11.5, color: T.muted, maxWidth: 340, textAlign: "right" }}>{note}</div>}
+        {right}
+      </div>
+    </div>
+  );
+}
+// The hide/confirm affordance, usable standalone (e.g. for a single table
+// column) or inside Section's header (for a full section).
+function HideControl({ id, confirmHideId, onRequestHide, onConfirmHide, onCancelHide, label = "this" }) {
+  const confirming = confirmHideId === id;
+  if (confirming) {
+    return (
+      <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: T.clay, whiteSpace: "nowrap" }}>
+        Hide {label}?
+        <button onClick={() => onConfirmHide(id)} style={{ background: T.clay, border: "none", color: T.bg, padding: "3px 8px", fontSize: 10.5, fontWeight: 600, cursor: "pointer", borderRadius: 3 }}>Yes</button>
+        <button onClick={onCancelHide} style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.muted, padding: "3px 8px", fontSize: 10.5, cursor: "pointer", borderRadius: 3 }}>Cancel</button>
+      </span>
+    );
+  }
+  return (
+    <button onClick={() => onRequestHide(id)} title={`Hide ${label}`} style={{ background: "transparent", border: "none", cursor: "pointer", color: T.muted, display: "flex", alignItems: "center", padding: 2 }}>
+      <EyeOff size={13} />
+    </button>
+  );
+}
+// Every new/optional visual is wrapped in this so it can be explained
+// (via `insight`, rendered as the header's note) and hidden/restored
+// without touching the section's own layout code.
+function Section({ id, eyebrow, title, insight, hiddenVisuals, confirmHideId, onRequestHide, onConfirmHide, onCancelHide, children }) {
+  if (hiddenVisuals.includes(id)) return null;
+  return (
+    <div style={{ marginBottom: 30 }}>
+      <SectionHeader
+        eyebrow={eyebrow}
+        title={title}
+        note={insight}
+        right={<HideControl id={id} confirmHideId={confirmHideId} onRequestHide={onRequestHide} onConfirmHide={onConfirmHide} onCancelHide={onCancelHide} label="this section" />}
+      />
+      {children}
     </div>
   );
 }
@@ -274,6 +351,7 @@ export default function Dashboard() {
   const [categories, setCategories] = useState([]);
   const [savedViews, setSavedViews] = useState([]);
   const [audienceSnapshot, setAudienceSnapshot] = useState(null);
+  const [audienceHistory, setAudienceHistory] = useState([]);
 
   const [range, setRange] = useState(null);
   const [preset, setPreset] = useState(() => readUrlParams().get("range") || "all");
@@ -300,6 +378,9 @@ export default function Dashboard() {
   const [selectedIds, setSelectedIds] = useState([]);
   const [bulkCatId, setBulkCatId] = useState("");
   const [activeSuggestion, setActiveSuggestion] = useState(null);
+  const [hiddenVisuals, setHiddenVisuals] = useState([]);
+  const [confirmHideId, setConfirmHideId] = useState(null);
+  const [manageHiddenOpen, setManageHiddenOpen] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -365,11 +446,35 @@ export default function Dashboard() {
         .from("audience_snapshots")
         .select("*")
         .order("snapshot_date", { ascending: false })
-        .limit(1);
+        .limit(90);
       if (error) { console.warn("audience_snapshots unavailable:", error.message); return; }
       setAudienceSnapshot(data?.[0] ?? null);
+      setAudienceHistory((data ?? []).slice().reverse());
     })();
   }, []);
+
+  // Isolated for the same reason — hidden_visuals is a newer table too.
+  useEffect(() => {
+    (async () => {
+      const { data, error } = await supabase.from("hidden_visuals").select("visual_id");
+      if (error) { console.warn("hidden_visuals unavailable:", error.message); return; }
+      setHiddenVisuals((data ?? []).map((r) => r.visual_id));
+    })();
+  }, []);
+
+  const requestHide = (id) => setConfirmHideId(id);
+  const cancelHide = () => setConfirmHideId(null);
+  const confirmHide = async (id) => {
+    setHiddenVisuals((v) => [...v, id]);
+    setConfirmHideId(null);
+    const { error } = await supabase.from("hidden_visuals").insert({ visual_id: id });
+    if (error) console.error("Failed to hide visual:", error.message);
+  };
+  const unhideVisual = async (id) => {
+    setHiddenVisuals((v) => v.filter((x) => x !== id));
+    const { error } = await supabase.from("hidden_visuals").delete().eq("visual_id", id);
+    if (error) console.error("Failed to restore visual:", error.message);
+  };
 
   // Keep the URL in sync so filters/tab/view are shareable and survive a refresh.
   useEffect(() => {
@@ -497,21 +602,99 @@ export default function Dashboard() {
     return true;
   }), [posts, topicFilter, search]);
 
+  const postsOnly = useMemo(() => posts.filter((p) => p.contentType === "Post"), [posts]);
+  const reelsOnly = useMemo(() => posts.filter((p) => p.contentType === "Reel"), [posts]);
+
+  // Item 20 dependency: same-length prior-period average engagement per
+  // category, for a momentum delta next to each Topics row.
+  const prevTopicAvg = useMemo(() => {
+    const g = {};
+    prevPosts.forEach((p) => (g[p.catId] = g[p.catId] || []).push(p));
+    const map = {};
+    Object.entries(g).forEach(([catId, arr]) => { map[catId] = arr.reduce((a, p) => a + p.engagement, 0) / arr.length; });
+    return map;
+  }, [prevPosts]);
+
   const topicRows = useMemo(() => {
     const g = {};
     posts.forEach((p) => (g[p.catId] = g[p.catId] || []).push(p));
     return categories.filter((c) => g[c.id]?.length).map((c) => {
       const arr = g[c.id];
+      // Item 13 dependency: weekly engagement totals for a sparkline.
+      const byWeek = {};
+      arr.forEach((p) => { const wk = weekStartOf(p.date); byWeek[wk] = (byWeek[wk] || 0) + p.engagement; });
+      const sparkline = Object.entries(byWeek).sort(([a], [b]) => a.localeCompare(b)).map(([week, engagement]) => ({ week, engagement }));
+      const avgEngagement = +(arr.reduce((a, p) => a + p.engagement, 0) / arr.length).toFixed(1);
       return {
         catId: c.id, name: c.name, color: c.color, count: arr.length,
         likes: agg(arr, "likes", "sum"), comments: agg(arr, "comments", "sum"),
         shares: agg(arr, "shares", "sum"), saves: agg(arr, "saves", "sum"),
-        avgEngagement: +(arr.reduce((a, p) => a + p.engagement, 0) / arr.length).toFixed(1),
+        avgEngagement,
+        prevAvgEngagement: prevTopicAvg[c.id] ?? null,
+        sparkline,
         items: arr.slice().sort((a, b) => b.engagement - a.engagement),
       };
     }).sort((a, b) => b.avgEngagement - a.avgEngagement);
-  }, [posts, categories]);
+  }, [posts, categories, prevTopicAvg]);
   const sortedTopicRows = useMemo(() => sortRows(topicRows, topicSort, { name: "string" }), [topicRows, topicSort]);
+
+  // Item 8: skip-rate leaderboard (Reels only).
+  const skipRateRanked = useMemo(() => {
+    const withRate = reelsOnly.filter((p) => p.reelsSkipRate !== null && p.reelsSkipRate !== undefined);
+    const sorted = withRate.slice().sort((a, b) => a.reelsSkipRate - b.reelsSkipRate);
+    return { best: sorted.slice(0, 5), worst: sorted.slice(-5).reverse() };
+  }, [reelsOnly]);
+
+  // Item 9: top posts by new followers (Posts only).
+  const topByNewFollowers = useMemo(() => {
+    return postsOnly.filter((p) => p.newFollowers).slice().sort((a, b) => b.newFollowers - a.newFollowers).slice(0, 5);
+  }, [postsOnly]);
+
+  // Item 10: watch-time efficiency scatter (Reels only).
+  const watchTimeScatter = useMemo(() => {
+    return reelsOnly.filter((p) => p.avgWatchTimeMs != null && p.totalWatchTimeMs != null).map((p) => ({ x: p.avgWatchTimeMs, y: p.totalWatchTimeMs, caption: p.caption }));
+  }, [reelsOnly]);
+
+  // Item 11: hashtag performance — explode hashtags, average engagement per tag.
+  const hashtagPerformance = useMemo(() => {
+    const g = {};
+    posts.forEach((p) => (p.hashtags ?? []).forEach((tag) => (g[tag] = g[tag] || []).push(p.engagement)));
+    return Object.entries(g)
+      .map(([tag, vals]) => ({ tag, count: vals.length, avgEngagement: +(vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1) }))
+      .filter((r) => r.count >= 2)
+      .sort((a, b) => b.avgEngagement - a.avgEngagement)
+      .slice(0, 10);
+  }, [posts]);
+
+  // Item 12: Reel duration vs. performance scatter.
+  const durationScatter = useMemo(() => {
+    return reelsOnly.filter((p) => p.durationS != null).map((p) => ({ x: p.durationS, y: p.engagement, caption: p.caption }));
+  }, [reelsOnly]);
+
+  // Item 22: underperformers — items below half their category's average
+  // engagement, so it's relative to a comparable baseline, not a global one.
+  const underperformers = useMemo(() => {
+    const avgByCategory = Object.fromEntries(topicRows.map((r) => [r.catId, r.avgEngagement]));
+    return posts
+      .filter((p) => avgByCategory[p.catId] && p.engagement < avgByCategory[p.catId] * 0.5)
+      .map((p) => ({ ...p, categoryAvg: avgByCategory[p.catId] }))
+      .sort((a, b) => (a.engagement / a.categoryAvg) - (b.engagement / b.categoryAvg))
+      .slice(0, 8);
+  }, [posts, topicRows]);
+
+  // Item 23: category x content-type matrix — avg engagement per cell.
+  const categoryTypeMatrix = useMemo(() => {
+    return categories.map((c) => {
+      const reelsArr = posts.filter((p) => p.catId === c.id && p.contentType === "Reel");
+      const postsArr = posts.filter((p) => p.catId === c.id && p.contentType === "Post");
+      return {
+        catId: c.id, name: c.name, color: c.color,
+        reelAvg: reelsArr.length ? +(agg(reelsArr, "engagement", "sum") / reelsArr.length).toFixed(1) : null,
+        postAvg: postsArr.length ? +(agg(postsArr, "engagement", "sum") / postsArr.length).toFixed(1) : null,
+        reelCount: reelsArr.length, postCount: postsArr.length,
+      };
+    }).filter((r) => r.reelCount || r.postCount);
+  }, [posts, categories]);
 
   const sortedFiltered = useMemo(() => {
     const dimTypes = { topic: "string", hashtags: "string", date: "string", caption: "string", contentType: "string" };
@@ -552,6 +735,123 @@ export default function Dashboard() {
       .sort((a, b) => b[1] - a[1])
       .slice(0, 8);
   }, [audienceSnapshot]);
+
+  // Item 3: engagement rate — normalizes interactions against reach instead
+  // of comparing raw sums across periods with different posting volume.
+  const engagementRate = useMemo(() => {
+    const r = agg(posts, "reach", "sum");
+    return r ? +((agg(posts, "engagement", "sum") / r) * 100).toFixed(2) : null;
+  }, [posts]);
+  const prevEngagementRate = useMemo(() => {
+    const r = agg(prevPosts, "reach", "sum");
+    return r ? +((agg(prevPosts, "engagement", "sum") / r) * 100).toFixed(2) : null;
+  }, [prevPosts]);
+
+  // Item 5: profile funnel (Posts only — Reels don't support these metrics).
+  const funnelStages = useMemo(() => {
+    const reachSum = agg(postsOnly, "reach", "sum");
+    const visits = agg(postsOnly, "profileVisits", "sum");
+    const actions = agg(postsOnly, "profileActivity", "sum");
+    const followers = agg(postsOnly, "newFollowers", "sum");
+    return [
+      { label: "Reach (Posts)", value: reachSum, icon: Users, convPct: null },
+      { label: "Profile visits", value: visits, icon: ExternalLink, convPct: reachSum ? (visits / reachSum) * 100 : null },
+      { label: "Profile actions", value: actions, icon: ExternalLink, convPct: visits ? (actions / visits) * 100 : null },
+      { label: "New followers", value: followers, icon: TrendingUp, convPct: actions ? (followers / actions) * 100 : null },
+    ];
+  }, [postsOnly]);
+
+  // Item 6: best day of week — bucket by weekday, average engagement per bucket.
+  const bestDayData = useMemo(() => {
+    const buckets = WEEKDAY_NAMES.map((day) => ({ day, total: 0, count: 0 }));
+    posts.forEach((p) => {
+      const wd = new Date(p.date + "T00:00:00Z").getUTCDay();
+      buckets[wd].total += p.engagement;
+      buckets[wd].count += 1;
+    });
+    return buckets.map((b) => ({ day: b.day, avgEngagement: b.count ? +(b.total / b.count).toFixed(1) : 0, count: b.count }));
+  }, [posts]);
+  const hasBestDayData = useMemo(() => bestDayData.some((b) => b.count > 0), [bestDayData]);
+
+  // Item 7: content mix over time — Reels vs. Posts published per week.
+  const contentMixWeekly = useMemo(() => {
+    const byWeek = {};
+    posts.forEach((p) => {
+      const key = weekStartOf(p.date);
+      byWeek[key] = byWeek[key] || { week: key, Reel: 0, Post: 0 };
+      byWeek[key][p.contentType] += 1;
+    });
+    return Object.values(byWeek).sort((a, b) => a.week.localeCompare(b.week));
+  }, [posts]);
+
+  // Item 15: rewatch index — views per reached account, Reels only. Above 1
+  // means the average reached viewer watched more than once.
+  const rewatchIndex = useMemo(() => {
+    const reach = agg(reelsOnly, "reach", "sum");
+    return reach ? +(agg(reelsOnly, "plays", "sum") / reach).toFixed(2) : null;
+  }, [reelsOnly]);
+  const prevRewatchIndex = useMemo(() => {
+    const prevReels = prevPosts.filter((p) => p.contentType === "Reel");
+    const reach = agg(prevReels, "reach", "sum");
+    return reach ? +(agg(prevReels, "plays", "sum") / reach).toFixed(2) : null;
+  }, [prevPosts]);
+
+  // Item 19: audience composition drift — gender split per snapshot day,
+  // summed across all age buckets (age x gender x day would be too many
+  // series to read at once).
+  const genderDriftData = useMemo(() => {
+    return audienceHistory.map((snap) => {
+      const rows = snap.age_gender ?? [];
+      const totals = { F: 0, M: 0, U: 0 };
+      rows.forEach((r) => {
+        const gender = r.dimension_values?.[1];
+        if (gender in totals) totals[gender] += r.value;
+      });
+      return { date: snap.snapshot_date, ...totals };
+    });
+  }, [audienceHistory]);
+
+  // Item 21: profile funnel trend — Posts' profile_visits/profile_activity
+  // summed per week, so you can see if profile-visit-driving content is
+  // increasing or fading rather than only seeing the range total.
+  const profileFunnelWeekly = useMemo(() => {
+    const byWeek = {};
+    postsOnly.forEach((p) => {
+      const key = weekStartOf(p.date);
+      byWeek[key] = byWeek[key] || { week: key, visits: 0, actions: 0 };
+      byWeek[key].visits += p.profileVisits ?? 0;
+      byWeek[key].actions += p.profileActivity ?? 0;
+    });
+    return Object.values(byWeek).sort((a, b) => a.week.localeCompare(b.week));
+  }, [postsOnly]);
+
+  // Item 24: posting streak — consecutive weeks (not days; this account
+  // doesn't post daily) with at least one item, walking back from the most
+  // recent. Deliberately uses ALL content, not the range-filtered `posts`,
+  // same reasoning as "Data last synced" — it should reflect today's real
+  // streak regardless of what date range happens to be selected.
+  const postingStreak = useMemo(() => {
+    if (!content.length) return 0;
+    const weeks = [...new Set(content.map((p) => weekStartOf(p.date)))].sort().reverse();
+    if (!weeks.length) return 0;
+    let streak = 1;
+    let cursor = new Date(weeks[0] + "T00:00:00Z");
+    for (let i = 1; i < weeks.length; i++) {
+      cursor.setUTCDate(cursor.getUTCDate() - 7);
+      if (weeks[i] === cursor.toISOString().slice(0, 10)) streak++;
+      else break;
+    }
+    return streak;
+  }, [content]);
+
+  // Item 25: follower milestone — next round number above the current count.
+  const followerMilestone = useMemo(() => {
+    const current = followerNow.now;
+    if (!current) return null;
+    let milestone = MILESTONE_STEPS.find((m) => m > current);
+    if (!milestone) milestone = Math.ceil(current / 1000000) * 1000000 + 1000000;
+    return { current, milestone, remaining: milestone - current, pct: (current / milestone) * 100 };
+  }, [followerNow.now]);
 
   if (loading) {
     return (
@@ -602,6 +902,26 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {hiddenVisuals.length > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <button onClick={() => setManageHiddenOpen((s) => !s)} style={{ display: "flex", alignItems: "center", gap: 6, background: "transparent", border: `1px solid ${T.line}`, color: T.muted, padding: "5px 10px", fontSize: 11, cursor: "pointer", borderRadius: 3 }}>
+            <EyeOff size={11} /> {hiddenVisuals.length} hidden — {manageHiddenOpen ? "Hide" : "Manage"}
+          </button>
+          {manageHiddenOpen && (
+            <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "12px 14px", marginTop: 8, ...facet(8) }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {VISUAL_REGISTRY.filter((v) => hiddenVisuals.includes(v.id)).map((v) => (
+                  <div key={v.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: 12, color: T.ivory }}>{v.label} <span style={{ color: T.muted, fontSize: 10.5 }}>({v.tab})</span></span>
+                    <button onClick={() => unhideVisual(v.id)} style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.gold, padding: "3px 10px", fontSize: 11, cursor: "pointer", borderRadius: 3 }}>Show</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {tab !== "overview" && (
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 26 }}>
           <span style={{ fontSize: 11, color: T.muted }}>Content type:</span>
@@ -647,6 +967,51 @@ export default function Dashboard() {
             )}
           </div>
 
+          <Section id="net-follower-bars" eyebrow="Audience" title="Net follower change" insight="Daily gains/losses rather than the cumulative total above — makes it easier to spot which specific days drove growth or churn." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
+            <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 6px", ...facet(10) }}>
+              {daily.length < 2 ? (
+                <div style={{ height: 140, display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: 12 }}>Not enough history yet.</div>
+              ) : (
+                <ResponsiveContainer width="100%" height={140}>
+                  <BarChart data={daily}>
+                    <CartesianGrid stroke={T.line} vertical={false} />
+                    <XAxis dataKey="date" tickFormatter={(d) => fmtDate(d, { year: false })} tick={{ fontSize: 10, fill: T.muted }} axisLine={{ stroke: T.line }} tickLine={false} minTickGap={40} />
+                    <YAxis tick={{ fontSize: 10, fill: T.muted }} axisLine={false} tickLine={false} width={36} />
+                    <Tooltip content={<Tip />} />
+                    <Bar dataKey="netFollowerChange" name="Net change" radius={2}>
+                      {daily.map((d, i) => <Cell key={i} fill={(d.netFollowerChange ?? 0) >= 0 ? T.sage : T.clay} />)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </Section>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12, marginBottom: 30 }}>
+            <Section id="follower-milestone" eyebrow="Audience" title="Next milestone" insight="How close the account is to its next round-number follower count." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
+              {followerMilestone ? (
+                <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 13px", ...facet(11) }}>
+                  <div style={{ fontFamily: "'Fraunces', serif", fontSize: 20, color: T.ivory, marginBottom: 8 }}>{fmt(followerMilestone.current)} <span style={{ color: T.muted, fontSize: 13 }}>/ {fmt(followerMilestone.milestone)}</span></div>
+                  <div style={{ height: 6, background: T.surface2, borderRadius: 3, overflow: "hidden", marginBottom: 8 }}>
+                    <div style={{ height: "100%", width: `${Math.min(100, followerMilestone.pct)}%`, background: T.gold }} />
+                  </div>
+                  <div style={{ fontSize: 11.5, color: T.muted }}>{fmt(followerMilestone.remaining)} followers to go</div>
+                </div>
+              ) : (
+                <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px", color: T.muted, fontSize: 12, ...facet(11) }}>No follower data yet.</div>
+              )}
+            </Section>
+            <Section id="posting-streak" eyebrow="Audience" title="Posting consistency" insight="Consecutive weeks (not days — this account doesn't post daily) with at least one piece of content, counted back from the most recent post. Reflects all-time data, not the date range above." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
+              <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 13px", ...facet(11) }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <Flame size={18} color={T.gold} />
+                  <div style={{ fontFamily: "'Fraunces', serif", fontSize: 23, color: T.ivory }}>{postingStreak}</div>
+                </div>
+                <div style={{ fontSize: 11.5, color: T.muted, marginTop: 4 }}>consecutive week{postingStreak === 1 ? "" : "s"} with a post</div>
+              </div>
+            </Section>
+          </div>
+
           <SectionHeader eyebrow="Reach" title="How far content traveled" note="De-duplicated at the account level. Still sums across days in the range, so multi-day overlap isn't removed. The Reels/Posts breakdown excludes Stories; the total does not — see each card's info icon." />
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 30 }}>
             {hasAccountReach && (
@@ -669,6 +1034,39 @@ export default function Dashboard() {
               </div>
             </>
           )}
+
+          <Section id="views-trend" eyebrow="Reach" title="Views over time" insight="Day-by-day trend behind the Views — Reels/Posts totals above — shows whether viewership is climbing or fading, not just the range sum." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
+            <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 6px", ...facet(10) }}>
+              {daily.length < 2 ? (
+                <div style={{ height: 160, display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: 12 }}>Not enough history yet.</div>
+              ) : (
+                <ResponsiveContainer width="100%" height={180}>
+                  <AreaChart data={daily}>
+                    <defs>
+                      <linearGradient id="vr" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={T.gold} stopOpacity={0.3} /><stop offset="100%" stopColor={T.gold} stopOpacity={0} /></linearGradient>
+                      <linearGradient id="vp" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={T.sage} stopOpacity={0.3} /><stop offset="100%" stopColor={T.sage} stopOpacity={0} /></linearGradient>
+                    </defs>
+                    <CartesianGrid stroke={T.line} vertical={false} />
+                    <XAxis dataKey="date" tickFormatter={(d) => fmtDate(d, { year: false })} tick={{ fontSize: 10, fill: T.muted }} axisLine={{ stroke: T.line }} tickLine={false} minTickGap={40} />
+                    <YAxis tick={{ fontSize: 10, fill: T.muted }} axisLine={false} tickLine={false} width={44} />
+                    <Tooltip content={<Tip />} />
+                    <Legend wrapperStyle={{ fontSize: 10.5, color: T.muted }} />
+                    <Area type="monotone" dataKey="viewsReels" name="Views — Reels" stroke={T.gold} fill="url(#vr)" strokeWidth={2} />
+                    <Area type="monotone" dataKey="viewsPosts" name="Views — Posts" stroke={T.sage} fill="url(#vp)" strokeWidth={2} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </Section>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 30 }}>
+            <Section id="engagement-rate" eyebrow="Engagement" title="Engagement rate" insight="Interactions as a % of reach — normalizes engagement so periods with different posting volume are comparable, unlike raw interaction totals." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
+              <KpiCard icon={TrendingUp} label="Engagement rate" value={engagementRate !== null ? `${engagementRate}%` : "—"} delta={pct(engagementRate, prevEngagementRate)} description="Total interactions ÷ reach, as a percentage, for content in the selected range." />
+            </Section>
+            <Section id="rewatch-index" eyebrow="Engagement" title="Rewatch index" insight="Plays ÷ reach for Reels. Above 1 means the average reached viewer watched more than once — a stickiness signal distinct from raw view count." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
+              <KpiCard icon={Eye} label="Rewatch index (Reels)" value={rewatchIndex ?? "—"} delta={pct(rewatchIndex, prevRewatchIndex)} description="Plays divided by reach for Reels in the selected range. 1.0 means everyone who saw it watched exactly once on average; higher means rewatching." />
+            </Section>
+          </div>
 
           {audienceSnapshot && (
             <>
@@ -703,6 +1101,114 @@ export default function Dashboard() {
               </div>
             </>
           )}
+
+          <Section id="audience-drift" eyebrow="Audience" title="Audience composition over time" insight="Gender split of your followers by day, summed across all age groups. Shows whether your audience mix is shifting, not just today's snapshot. Needs a few weeks of accumulated daily snapshots to be useful." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
+            <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 6px", ...facet(10) }}>
+              {genderDriftData.length < 2 ? (
+                <div style={{ height: 160, display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: 12, textAlign: "center", padding: "0 20px" }}>Not enough snapshot history yet — check back after a few more days.</div>
+              ) : (
+                <ResponsiveContainer width="100%" height={180}>
+                  <AreaChart data={genderDriftData}>
+                    <CartesianGrid stroke={T.line} vertical={false} />
+                    <XAxis dataKey="date" tickFormatter={(d) => fmtDate(d, { year: false })} tick={{ fontSize: 10, fill: T.muted }} axisLine={{ stroke: T.line }} tickLine={false} minTickGap={40} />
+                    <YAxis tick={{ fontSize: 10, fill: T.muted }} axisLine={false} tickLine={false} width={36} />
+                    <Tooltip content={<Tip />} />
+                    <Legend wrapperStyle={{ fontSize: 10.5, color: T.muted }} />
+                    <Area type="monotone" stackId="g" dataKey="F" name="Female" stroke={T.gold} fill={T.gold} fillOpacity={0.5} />
+                    <Area type="monotone" stackId="g" dataKey="M" name="Male" stroke={T.sage} fill={T.sage} fillOpacity={0.5} />
+                    <Area type="monotone" stackId="g" dataKey="U" name="Unspecified" stroke={T.muted} fill={T.muted} fillOpacity={0.5} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </Section>
+
+          <Section id="new-followers-content" eyebrow="Profile funnel" title="New followers from content" insight="Posts only — Reels don't support follower attribution. Sum of new followers Meta attributes directly to a specific post, within the selected range." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
+              <KpiCard icon={TrendingUp} label="New followers (Posts)" value={fmt(agg(postsOnly, "newFollowers", "sum"))} description="New followers attributed to Posts specifically in the selected range." />
+            </div>
+          </Section>
+
+          <Section id="profile-funnel" eyebrow="Profile funnel" title="Reach → profile → follow" insight="Posts only. Each stage's % is the conversion rate from the stage above it — where the funnel narrows most is where there's the most room to improve." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
+            <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px", ...facet(10) }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {funnelStages.map((s, i) => (
+                  <div key={s.label} style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <div style={{ width: 26, height: 26, borderRadius: "50%", background: "rgba(203,163,92,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><s.icon size={13} color={T.gold} /></div>
+                    <div style={{ flex: 1, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontSize: 12.5, color: T.ivory }}>{s.label}</span>
+                      <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        {s.convPct !== null && <span style={{ fontSize: 11, color: T.muted }}>{s.convPct.toFixed(1)}%</span>}
+                        <span style={{ fontFamily: "'Fraunces', serif", fontSize: 16, color: T.ivory, minWidth: 40, textAlign: "right" }}>{fmt(s.value)}</span>
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </Section>
+
+          <Section id="bio-link-funnel-trend" eyebrow="Profile funnel" title="Profile funnel trend" insight="Posts' profile visits and profile actions, bucketed by week — shows whether profile-visit-driving content is increasing or fading, not just the range total." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
+            <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 6px", ...facet(10) }}>
+              {profileFunnelWeekly.length < 2 ? (
+                <div style={{ height: 160, display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: 12, textAlign: "center", padding: "0 20px" }}>Not enough Posts in range to show a weekly trend.</div>
+              ) : (
+                <ResponsiveContainer width="100%" height={180}>
+                  <AreaChart data={profileFunnelWeekly}>
+                    <defs>
+                      <linearGradient id="pfv" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={T.gold} stopOpacity={0.3} /><stop offset="100%" stopColor={T.gold} stopOpacity={0} /></linearGradient>
+                      <linearGradient id="pfa" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={T.clay} stopOpacity={0.3} /><stop offset="100%" stopColor={T.clay} stopOpacity={0} /></linearGradient>
+                    </defs>
+                    <CartesianGrid stroke={T.line} vertical={false} />
+                    <XAxis dataKey="week" tickFormatter={(d) => fmtDate(d, { year: false })} tick={{ fontSize: 10, fill: T.muted }} axisLine={{ stroke: T.line }} tickLine={false} minTickGap={40} />
+                    <YAxis tick={{ fontSize: 10, fill: T.muted }} axisLine={false} tickLine={false} width={36} />
+                    <Tooltip content={<Tip />} />
+                    <Legend wrapperStyle={{ fontSize: 10.5, color: T.muted }} />
+                    <Area type="monotone" dataKey="visits" name="Profile visits" stroke={T.gold} fill="url(#pfv)" strokeWidth={2} />
+                    <Area type="monotone" dataKey="actions" name="Profile actions" stroke={T.clay} fill="url(#pfa)" strokeWidth={2} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </Section>
+
+          <Section id="best-day-of-week" eyebrow="Content strategy" title="Best day to post" insight="Average engagement per weekday, across all posts/reels in the selected range. Higher bars = days that have historically performed better." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
+            <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 6px", ...facet(10) }}>
+              {!hasBestDayData ? (
+                <div style={{ height: 160, display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: 12 }}>No posts in range yet.</div>
+              ) : (
+                <ResponsiveContainer width="100%" height={180}>
+                  <BarChart data={bestDayData}>
+                    <CartesianGrid stroke={T.line} vertical={false} />
+                    <XAxis dataKey="day" tick={{ fontSize: 10, fill: T.muted }} axisLine={{ stroke: T.line }} tickLine={false} />
+                    <YAxis tick={{ fontSize: 10, fill: T.muted }} axisLine={false} tickLine={false} width={36} />
+                    <Tooltip content={<Tip />} />
+                    <Bar dataKey="avgEngagement" name="Avg engagement" fill={T.gold} radius={2} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </Section>
+
+          <Section id="content-mix-trend" eyebrow="Content strategy" title="Content mix over time" insight="Reels vs. Posts published per week — a quick sanity check on whether posting strategy balance is drifting from what you intend." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
+            <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 6px", ...facet(10) }}>
+              {contentMixWeekly.length < 1 ? (
+                <div style={{ height: 160, display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: 12 }}>No posts in range yet.</div>
+              ) : (
+                <ResponsiveContainer width="100%" height={180}>
+                  <BarChart data={contentMixWeekly}>
+                    <CartesianGrid stroke={T.line} vertical={false} />
+                    <XAxis dataKey="week" tickFormatter={(d) => fmtDate(d, { year: false })} tick={{ fontSize: 10, fill: T.muted }} axisLine={{ stroke: T.line }} tickLine={false} minTickGap={40} />
+                    <YAxis tick={{ fontSize: 10, fill: T.muted }} axisLine={false} tickLine={false} width={30} allowDecimals={false} />
+                    <Tooltip content={<Tip />} />
+                    <Legend wrapperStyle={{ fontSize: 10.5, color: T.muted }} />
+                    <Bar dataKey="Reel" name="Reels" stackId="mix" fill={T.gold} radius={0} />
+                    <Bar dataKey="Post" name="Posts" stackId="mix" fill={T.sage} radius={[2, 2, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </Section>
         </>
       )}
 
@@ -758,10 +1264,21 @@ export default function Dashboard() {
                 <Th label="Shares" sortKey="shares" sort={topicSort} setSort={setTopicSort} align="right" infoText={METRICS.find((m) => m.key === "shares").description} />
                 <Th label="Saves" sortKey="saves" sort={topicSort} setSort={setTopicSort} align="right" infoText={METRICS.find((m) => m.key === "saves").description} />
                 <Th label="Avg engagement (per item)" sortKey="avgEngagement" sort={topicSort} setSort={setTopicSort} align="right" infoText={METRICS.find((m) => m.key === "engagement").description} />
+                {!hiddenVisuals.includes("category-momentum") && (
+                  <th style={{ padding: "10px 13px", textAlign: "right", whiteSpace: "nowrap" }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>Momentum <HideControl id="category-momentum" confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide} label="the momentum column" /></span>
+                  </th>
+                )}
+                {!hiddenVisuals.includes("category-sparklines") && (
+                  <th style={{ padding: "10px 13px", textAlign: "right", whiteSpace: "nowrap" }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>Trend <HideControl id="category-sparklines" confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide} label="the trend column" /></span>
+                  </th>
+                )}
               </tr></thead>
               <tbody>
                 {sortedTopicRows.map((row) => {
                   const isOpen = expandedTopics.includes(row.catId);
+                  const momentum = pct(row.avgEngagement, row.prevAvgEngagement);
                   return (
                     <React.Fragment key={row.catId}>
                       <tr style={{ borderBottom: `1px solid ${T.line}`, cursor: "pointer" }} onClick={() => setExpandedTopics((s) => s.includes(row.catId) ? s.filter((x) => x !== row.catId) : [...s, row.catId])}>
@@ -773,6 +1290,20 @@ export default function Dashboard() {
                         <td style={{ padding: "9px 13px", textAlign: "right" }}>{fmt(row.shares)}</td>
                         <td style={{ padding: "9px 13px", textAlign: "right" }}>{fmt(row.saves)}</td>
                         <td style={{ padding: "9px 13px", textAlign: "right", color: T.gold, fontWeight: 600 }}>{fmt(row.avgEngagement)}</td>
+                        {!hiddenVisuals.includes("category-momentum") && (
+                          <td style={{ padding: "9px 13px", textAlign: "right" }}><Delta value={momentum} /></td>
+                        )}
+                        {!hiddenVisuals.includes("category-sparklines") && (
+                          <td style={{ padding: "9px 13px", width: 90 }}>
+                            {row.sparkline.length >= 2 ? (
+                              <ResponsiveContainer width="100%" height={28}>
+                                <AreaChart data={row.sparkline}>
+                                  <Area type="monotone" dataKey="engagement" stroke={row.color} fill={row.color} fillOpacity={0.25} strokeWidth={1.5} isAnimationActive={false} />
+                                </AreaChart>
+                              </ResponsiveContainer>
+                            ) : <span style={{ fontSize: 10, color: T.muted }}>—</span>}
+                          </td>
+                        )}
                       </tr>
                       {isOpen && row.items.map((it) => (
                         <tr key={it.id} style={{ borderBottom: `1px solid ${T.line}`, background: T.surface2 }}>
@@ -792,6 +1323,8 @@ export default function Dashboard() {
                           <td style={{ padding: "7px 13px", textAlign: "right", fontSize: 11.5 }}>{it.shares}</td>
                           <td style={{ padding: "7px 13px", textAlign: "right", fontSize: 11.5 }}>{it.saves}</td>
                           <td style={{ padding: "7px 13px", textAlign: "right", fontSize: 11.5, color: T.gold }}>{it.engagement}</td>
+                          {!hiddenVisuals.includes("category-momentum") && <td style={{ padding: "7px 13px" }}></td>}
+                          {!hiddenVisuals.includes("category-sparklines") && <td style={{ padding: "7px 13px" }}></td>}
                         </tr>
                       ))}
                     </React.Fragment>
@@ -832,6 +1365,143 @@ export default function Dashboard() {
               </div>
             ))}
           </div>
+
+          <Section id="skip-rate-leaderboard" eyebrow="Reels" title="Skip rate leaderboard" insight="Reels only. Lowest skip rate = best hooks (fewest people leaving in the first 3 seconds); highest = openings worth revisiting." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "14px 16px", ...facet(9) }}>
+                <div style={{ fontSize: 10.5, color: T.sage, marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Best hooks</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                  {skipRateRanked.best.map((p) => (
+                    <div key={p.id} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12 }}>
+                      <span style={{ color: T.ivory, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{p.caption}</span>
+                      <span style={{ color: T.sage, fontWeight: 600, flexShrink: 0 }}>{p.reelsSkipRate}%</span>
+                    </div>
+                  ))}
+                  {!skipRateRanked.best.length && <div style={{ fontSize: 11.5, color: T.muted }}>No skip-rate data yet.</div>}
+                </div>
+              </div>
+              <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "14px 16px", ...facet(9) }}>
+                <div style={{ fontSize: 10.5, color: T.clay, marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Needs work</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                  {skipRateRanked.worst.map((p) => (
+                    <div key={p.id} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12 }}>
+                      <span style={{ color: T.ivory, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{p.caption}</span>
+                      <span style={{ color: T.clay, fontWeight: 600, flexShrink: 0 }}>{p.reelsSkipRate}%</span>
+                    </div>
+                  ))}
+                  {!skipRateRanked.worst.length && <div style={{ fontSize: 11.5, color: T.muted }}>No skip-rate data yet.</div>}
+                </div>
+              </div>
+            </div>
+          </Section>
+
+          <Section id="top-posts-new-followers" eyebrow="Posts" title="Top posts by new followers" insight="Posts only — Reels don't support follower attribution. Which specific posts drove the most new follows." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
+            <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "14px 16px", ...facet(9) }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                {topByNewFollowers.map((p) => (
+                  <div key={p.id} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12 }}>
+                    <span style={{ color: T.ivory, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{p.caption}</span>
+                    <span style={{ color: T.gold, fontWeight: 600, flexShrink: 0 }}>+{p.newFollowers}</span>
+                  </div>
+                ))}
+                {!topByNewFollowers.length && <div style={{ fontSize: 11.5, color: T.muted }}>No posts with attributed new followers in this range yet.</div>}
+              </div>
+            </div>
+          </Section>
+
+          <Section id="watch-time-efficiency" eyebrow="Reels" title="Watch-time efficiency" insight="Average watch time (x) vs. total watch time (y) per Reel. Top-right = broad reach with strong retention. Bottom-right = a small but deeply engaged audience — a different kind of win the average alone hides." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
+            <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 6px", ...facet(10) }}>
+              {watchTimeScatter.length < 2 ? (
+                <div style={{ height: 200, display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: 12 }}>Not enough Reels with watch-time data yet.</div>
+              ) : (
+                <ResponsiveContainer width="100%" height={220}>
+                  <ScatterChart margin={{ left: 4, right: 12, bottom: 4 }}>
+                    <CartesianGrid stroke={T.line} />
+                    <XAxis type="number" dataKey="x" name="Avg watch time" unit="ms" tick={{ fontSize: 10, fill: T.muted }} axisLine={{ stroke: T.line }} tickLine={false} />
+                    <YAxis type="number" dataKey="y" name="Total watch time" unit="ms" tick={{ fontSize: 10, fill: T.muted }} axisLine={false} tickLine={false} width={50} />
+                    <ZAxis range={[60, 60]} />
+                    <Tooltip cursor={{ stroke: T.line }} content={({ active, payload }) => active && payload?.length ? (
+                      <div style={{ background: T.surface2, border: `1px solid ${T.gold}`, padding: "8px 10px", fontSize: 11, color: T.ivory, maxWidth: 200 }}>{payload[0].payload.caption}</div>
+                    ) : null} />
+                    <Scatter data={watchTimeScatter} fill={T.gold} fillOpacity={0.7} />
+                  </ScatterChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </Section>
+
+          <Section id="hashtag-performance" eyebrow="Content strategy" title="Hashtag performance" insight="Average engagement of posts/reels using each hashtag (tags used only once are excluded — not enough samples to mean anything)." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
+            <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "14px 16px", ...facet(9) }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                {hashtagPerformance.map((h) => (
+                  <div key={h.tag} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12 }}>
+                    <span style={{ color: T.ivory }}>{h.tag} <span style={{ color: T.muted, fontSize: 10.5 }}>({h.count})</span></span>
+                    <span style={{ color: T.gold, fontWeight: 600 }}>{fmt(h.avgEngagement)}</span>
+                  </div>
+                ))}
+                {!hashtagPerformance.length && <div style={{ fontSize: 11.5, color: T.muted }}>No hashtag used more than once in this range yet.</div>}
+              </div>
+            </div>
+          </Section>
+
+          <Section id="duration-scatter" eyebrow="Reels" title="Reel duration vs. performance" insight="Duration in seconds (x) vs. engagement (y) per Reel — a way to see whether shorter or longer reels tend to perform better for this account." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
+            <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 6px", ...facet(10) }}>
+              {durationScatter.length < 2 ? (
+                <div style={{ height: 200, display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: 12, textAlign: "center", padding: "0 20px" }}>No duration data yet — this needs a fresh ingestion run after the duration_s column exists.</div>
+              ) : (
+                <ResponsiveContainer width="100%" height={220}>
+                  <ScatterChart margin={{ left: 4, right: 12, bottom: 4 }}>
+                    <CartesianGrid stroke={T.line} />
+                    <XAxis type="number" dataKey="x" name="Duration" unit="s" tick={{ fontSize: 10, fill: T.muted }} axisLine={{ stroke: T.line }} tickLine={false} />
+                    <YAxis type="number" dataKey="y" name="Engagement" tick={{ fontSize: 10, fill: T.muted }} axisLine={false} tickLine={false} width={40} />
+                    <ZAxis range={[60, 60]} />
+                    <Tooltip cursor={{ stroke: T.line }} content={({ active, payload }) => active && payload?.length ? (
+                      <div style={{ background: T.surface2, border: `1px solid ${T.gold}`, padding: "8px 10px", fontSize: 11, color: T.ivory, maxWidth: 200 }}>{payload[0].payload.caption}</div>
+                    ) : null} />
+                    <Scatter data={durationScatter} fill={T.sage} fillOpacity={0.7} />
+                  </ScatterChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </Section>
+
+          <Section id="underperformer-flag" eyebrow="Content strategy" title="Needs attention" insight="Content sitting below half its own category's average engagement — a relative bar, not a global one, so it's comparable across very different topics." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
+            <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "14px 16px", ...facet(9) }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                {underperformers.map((p) => (
+                  <div key={p.id} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12 }}>
+                    <span style={{ display: "flex", alignItems: "center", gap: 6, color: T.ivory, overflow: "hidden", minWidth: 0 }}>
+                      <span style={{ fontSize: 10.5, padding: "2px 7px", borderRadius: 3, background: `${p.topicColor}22`, color: p.topicColor, flexShrink: 0 }}>{p.topic}</span>
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{p.caption}</span>
+                    </span>
+                    <span style={{ color: T.muted, flexShrink: 0 }}>{p.engagement} <span style={{ fontSize: 10.5 }}>vs. {p.categoryAvg} avg</span></span>
+                  </div>
+                ))}
+                {!underperformers.length && <div style={{ fontSize: 11.5, color: T.muted }}>Nothing sitting notably below its category average right now.</div>}
+              </div>
+            </div>
+          </Section>
+
+          <Section id="category-matrix" eyebrow="Content strategy" title="Category × content type" insight="Average engagement per category, split by Reel vs. Post — shows which topics work better in which format." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
+            <div style={{ background: T.surface, border: `1px solid ${T.line}`, overflowX: "auto", ...facet(10) }}>
+              <table style={{ fontSize: 12 }}>
+                <thead><tr style={{ borderBottom: `1px solid ${T.line}`, color: T.muted, fontSize: 10, textTransform: "uppercase" }}>
+                  <th style={{ padding: "10px 13px", textAlign: "left" }}>Topic</th>
+                  <th style={{ padding: "10px 13px", textAlign: "right" }}>Reels avg</th>
+                  <th style={{ padding: "10px 13px", textAlign: "right" }}>Posts avg</th>
+                </tr></thead>
+                <tbody>
+                  {categoryTypeMatrix.map((r) => (
+                    <tr key={r.catId} style={{ borderBottom: `1px solid ${T.line}` }}>
+                      <td style={{ padding: "9px 13px" }}><span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: r.color }} />{r.name}</span></td>
+                      <td style={{ padding: "9px 13px", textAlign: "right" }}>{r.reelAvg !== null ? <>{fmt(r.reelAvg)} <span style={{ color: T.muted, fontSize: 10.5 }}>({r.reelCount})</span></> : <span style={{ color: T.muted }}>—</span>}</td>
+                      <td style={{ padding: "9px 13px", textAlign: "right" }}>{r.postAvg !== null ? <>{fmt(r.postAvg)} <span style={{ color: T.muted, fontSize: 10.5 }}>({r.postCount})</span></> : <span style={{ color: T.muted }}>—</span>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Section>
         </>
       )}
 
