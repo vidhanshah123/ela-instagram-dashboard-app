@@ -33,6 +33,7 @@ const METRICS = [
   { key: "reach", label: "Reach", agg: "sum", icon: Users, description: "Unique accounts that saw this content at least once." },
   { key: "avgWatchTimeMs", label: "Avg watch time (ms)", agg: "avg", icon: Clock, description: "Average milliseconds watched per view. Reels only. Graph API returns this in milliseconds, not a percentage." },
   { key: "totalWatchTimeMs", label: "Total watch time (ms)", agg: "sum", icon: Clock, description: "Cumulative milliseconds watched across all viewers, including replays. Reels only — a stronger 'held attention' signal than the average when comparing reels with very different view counts." },
+  { key: "reelsSkipRate", label: "Skip rate (%, first 3s)", agg: "avg", icon: TrendingDown, description: "Percentage of views that skipped this reel within the first 3 seconds, out of all initial views. Reels only — a hook-quality signal: lower is better." },
   { key: "engagement", label: "Total interactions", agg: "sum", icon: TrendingUp, description: "Likes + saves + comments + shares, minus unlikes/unsaves/deleted comments. Graph API's native total_interactions field." },
 ];
 // ISO 3166-1 alpha-2 -> display name, for the audience_snapshots country breakdown.
@@ -130,6 +131,7 @@ function mapContentRow(row, categories) {
     plays: row.plays,
     avgWatchTimeMs: row.avg_watch_time_ms,
     totalWatchTimeMs: row.total_watch_time_ms,
+    reelsSkipRate: row.reels_skip_rate,
     engagement: row.total_interactions ?? 0,
     cover: row.cover_url,
     permalink: row.permalink,
