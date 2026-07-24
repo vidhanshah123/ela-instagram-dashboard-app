@@ -32,8 +32,17 @@ const METRICS = [
   { key: "saves", label: "Saves", agg: "sum", icon: Bookmark, description: "Times this content was bookmarked/saved." },
   { key: "reach", label: "Reach", agg: "sum", icon: Users, description: "Unique accounts that saw this content at least once." },
   { key: "avgWatchTimeMs", label: "Avg watch time (ms)", agg: "avg", icon: Clock, description: "Average milliseconds watched per view. Reels only. Graph API returns this in milliseconds, not a percentage." },
+  { key: "totalWatchTimeMs", label: "Total watch time (ms)", agg: "sum", icon: Clock, description: "Cumulative milliseconds watched across all viewers, including replays. Reels only — a stronger 'held attention' signal than the average when comparing reels with very different view counts." },
   { key: "engagement", label: "Total interactions", agg: "sum", icon: TrendingUp, description: "Likes + saves + comments + shares, minus unlikes/unsaves/deleted comments. Graph API's native total_interactions field." },
 ];
+// ISO 3166-1 alpha-2 -> display name, for the audience_snapshots country breakdown.
+// Not exhaustive — falls back to the raw code for anything not listed here.
+const COUNTRY_NAMES = {
+  US: "United States", IN: "India", GB: "United Kingdom", CA: "Canada", AU: "Australia",
+  DE: "Germany", FR: "France", NO: "Norway", NL: "Netherlands", SE: "Sweden",
+  BR: "Brazil", MX: "Mexico", ES: "Spain", IT: "Italy", AE: "UAE", SG: "Singapore",
+  PK: "Pakistan", BD: "Bangladesh", PH: "Philippines", ID: "Indonesia", NG: "Nigeria",
+};
 const DIMENSION_FIELDS = [
   { key: "topic", label: "Topic" },
   { key: "hashtags", label: "Hashtags" },
@@ -58,8 +67,10 @@ const SUGGESTED_VIEWS = [
 /* ============ HELPERS ============ */
 const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 // Parses "YYYY-MM-DD" manually (no Date object) so display never shifts a day from timezone conversion.
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 function fmtDate(iso, { year = true } = {}) {
   if (!iso) return "—";
+  if (!ISO_DATE_RE.test(iso)) return iso; // not a date string (e.g. a chart category label) — pass through
   const [y, m, d] = iso.split("-").map(Number);
   const day = `${MONTH_ABBR[m - 1]} ${d}`;
   return year ? `${day}, ${y}` : day;
@@ -118,6 +129,7 @@ function mapContentRow(row, categories) {
     reach: row.reach ?? 0,
     plays: row.plays,
     avgWatchTimeMs: row.avg_watch_time_ms,
+    totalWatchTimeMs: row.total_watch_time_ms,
     engagement: row.total_interactions ?? 0,
     cover: row.cover_url,
     permalink: row.permalink,
@@ -129,6 +141,7 @@ function mapDailyRow(row) {
     followers: row.followers,
     following: row.following,
     netFollowerChange: row.net_follower_change,
+    accountReach: row.account_reach,
   };
 }
 
@@ -248,6 +261,7 @@ export default function Dashboard() {
   const [dailyRows, setDailyRows] = useState([]);
   const [categories, setCategories] = useState([]);
   const [savedViews, setSavedViews] = useState([]);
+  const [audienceSnapshot, setAudienceSnapshot] = useState(null);
 
   const [range, setRange] = useState(null);
   const [preset, setPreset] = useState(() => readUrlParams().get("range") || "all");
@@ -327,6 +341,21 @@ export default function Dashboard() {
       } finally {
         setLoading(false);
       }
+    })();
+  }, []);
+
+  // Isolated on purpose: audience_snapshots is a newer table that may not
+  // exist yet in every environment. A failure here (e.g. migration not run
+  // yet) should never take down the rest of the dashboard.
+  useEffect(() => {
+    (async () => {
+      const { data, error } = await supabase
+        .from("audience_snapshots")
+        .select("*")
+        .order("snapshot_date", { ascending: false })
+        .limit(1);
+      if (error) { console.warn("audience_snapshots unavailable:", error.message); return; }
+      setAudienceSnapshot(data?.[0] ?? null);
     })();
   }, []);
 
@@ -486,6 +515,29 @@ export default function Dashboard() {
 
   const followerNow = accVal("followers"), followingNow = accVal("following");
   const netChange = accSum("netFollowerChange");
+  const hasAccountReach = useMemo(() => daily.some((d) => d.accountReach !== null && d.accountReach !== undefined), [daily]);
+
+  const ageGenderChartData = useMemo(() => {
+    const rows = audienceSnapshot?.age_gender ?? [];
+    const byAge = {};
+    for (const r of rows) {
+      const [age, gender] = r.dimension_values ?? [];
+      if (!age) continue;
+      byAge[age] = byAge[age] || { age };
+      byAge[age][gender] = r.value;
+    }
+    const order = ["13-17", "18-24", "25-34", "35-44", "45-54", "55-64", "65+"];
+    return order.filter((a) => byAge[a]).map((a) => byAge[a]);
+  }, [audienceSnapshot]);
+
+  const topCountries = useMemo(() => {
+    const rows = audienceSnapshot?.country ?? [];
+    return rows
+      .map((r) => [r.dimension_values?.[0], r.value])
+      .filter(([code]) => code)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8);
+  }, [audienceSnapshot]);
 
   if (loading) {
     return (
@@ -586,7 +638,44 @@ export default function Dashboard() {
             <KpiCard icon={Users} label="Total reach" value={fmt(agg(posts, "reach", "sum"))} delta={pct(agg(posts, "reach", "sum"), agg(prevPosts, "reach", "sum"))} description={METRICS.find((m) => m.key === "reach").description} />
             <KpiCard icon={Video} label="Reach — Reels" value={fmt(agg(posts.filter((p) => p.contentType === "Reel"), "reach", "sum"))} delta={pct(agg(posts.filter((p) => p.contentType === "Reel"), "reach", "sum"), agg(prevPosts.filter((p) => p.contentType === "Reel"), "reach", "sum"))} description="Total reach from Reels only, within the selected range." />
             <KpiCard icon={ImageIcon} label="Reach — Posts" value={fmt(agg(posts.filter((p) => p.contentType === "Post"), "reach", "sum"))} delta={pct(agg(posts.filter((p) => p.contentType === "Post"), "reach", "sum"), agg(prevPosts.filter((p) => p.contentType === "Post"), "reach", "sum"))} description="Total reach from image/carousel Posts only, within the selected range." />
+            {hasAccountReach && (
+              <KpiCard icon={Users} label="Distinct accounts reached" value={fmt(agg(daily, "accountReach", "sum"))} delta={pct(agg(daily, "accountReach", "sum"), agg(prevDaily, "accountReach", "sum"))} description="Meta's own de-duplicated daily reach, summed across the range — different from 'Total reach' above, which sums each post's own reach and double-counts anyone who saw more than one post. Still sums across days, so multi-day overlap isn't removed." />
+            )}
           </div>
+
+          {audienceSnapshot && (
+            <>
+              <SectionHeader eyebrow="Audience" title="Who's following" note={`Snapshot from ${fmtDate(audienceSnapshot.snapshot_date)}. Requires 100+ followers to populate.`} />
+              <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 12, marginBottom: 30 }}>
+                <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 6px", ...facet(10) }}>
+                  <div style={{ fontSize: 10.5, color: T.muted, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>Age &amp; gender</div>
+                  <ResponsiveContainer width="100%" height={220}>
+                    <BarChart data={ageGenderChartData} layout="vertical" margin={{ left: 4, right: 12 }}>
+                      <CartesianGrid stroke={T.line} horizontal={false} />
+                      <XAxis type="number" tick={{ fontSize: 10, fill: T.muted }} axisLine={{ stroke: T.line }} tickLine={false} />
+                      <YAxis type="category" dataKey="age" tick={{ fontSize: 10, fill: T.muted }} axisLine={false} tickLine={false} width={40} />
+                      <Tooltip content={<Tip />} />
+                      <Bar dataKey="F" name="Female" fill={T.gold} radius={2} />
+                      <Bar dataKey="M" name="Male" fill={T.sage} radius={2} />
+                      <Bar dataKey="U" name="Unspecified" fill={T.muted} radius={2} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px", ...facet(10) }}>
+                  <div style={{ fontSize: 10.5, color: T.muted, marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Top countries</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {topCountries.map(([code, count]) => (
+                      <div key={code} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: T.ivory }}>
+                        <span style={{ color: T.muted }}>{COUNTRY_NAMES[code] || code}</span>
+                        <span>{fmt(count)}</span>
+                      </div>
+                    ))}
+                    {!topCountries.length && <div style={{ fontSize: 11.5, color: T.muted }}>No country data in this snapshot.</div>}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
         </>
       )}
 
