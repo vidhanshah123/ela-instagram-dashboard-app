@@ -647,13 +647,10 @@ export default function Dashboard() {
             )}
           </div>
 
-          <SectionHeader eyebrow="Reach" title="How far content traveled" note="Aggregated across all content in the selected date range." />
+          <SectionHeader eyebrow="Reach" title="How far content traveled" note="De-duplicated at the account level, by content type. Still sums across days in the range, so multi-day overlap isn't removed. Story is excluded." />
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 30 }}>
-            <KpiCard icon={Users} label="Total reach" value={fmt(agg(posts, "reach", "sum"))} delta={pct(agg(posts, "reach", "sum"), agg(prevPosts, "reach", "sum"))} description={METRICS.find((m) => m.key === "reach").description} />
-            <KpiCard icon={Video} label="Reach — Reels" value={fmt(agg(posts.filter((p) => p.contentType === "Reel"), "reach", "sum"))} delta={pct(agg(posts.filter((p) => p.contentType === "Reel"), "reach", "sum"), agg(prevPosts.filter((p) => p.contentType === "Reel"), "reach", "sum"))} description="Total reach from Reels only, within the selected range." />
-            <KpiCard icon={ImageIcon} label="Reach — Posts" value={fmt(agg(posts.filter((p) => p.contentType === "Post"), "reach", "sum"))} delta={pct(agg(posts.filter((p) => p.contentType === "Post"), "reach", "sum"), agg(prevPosts.filter((p) => p.contentType === "Post"), "reach", "sum"))} description="Total reach from image/carousel Posts only, within the selected range." />
             {hasAccountReach && (
-              <KpiCard icon={Users} label="Distinct accounts reached" value={fmt(agg(daily, "accountReach", "sum"))} delta={pct(agg(daily, "accountReach", "sum"), agg(prevDaily, "accountReach", "sum"))} description="Meta's own de-duplicated daily reach, summed across the range — different from 'Total reach' above, which sums each post's own reach and double-counts anyone who saw more than one post. Still sums across days, so multi-day overlap isn't removed." />
+              <KpiCard icon={Users} label="Distinct accounts reached" value={fmt(agg(daily, "accountReach", "sum"))} delta={pct(agg(daily, "accountReach", "sum"), agg(prevDaily, "accountReach", "sum"))} description="Meta's own de-duplicated daily reach, summed across the range — unlike summing each post's own reach, this doesn't double-count anyone who saw more than one post." />
             )}
             {hasDedupReachByType && (
               <>
