@@ -7,7 +7,7 @@ import {
   TrendingUp, TrendingDown, Heart, MessageCircle, Eye, Clock, Gem,
   Calendar, Video, Image as ImageIcon, Search, X, Info, Users,
   Share2, Bookmark, ChevronRight, ChevronDown,
-  Pencil, Plus, Check, Sliders, Columns, Save, Trash2, RotateCcw, FolderOpen,
+  Pencil, Plus, Check, Sliders, Columns, Save, Trash2, RotateCcw, FolderOpen, ExternalLink,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 
@@ -63,6 +63,12 @@ function fmtDate(iso, { year = true } = {}) {
   const [y, m, d] = iso.split("-").map(Number);
   const day = `${MONTH_ABBR[m - 1]} ${d}`;
   return year ? `${day}, ${y}` : day;
+}
+// Full timestamps (e.g. updated_at) carry real time-of-day info, so — unlike
+// pure "YYYY-MM-DD" dates — converting via Date to the viewer's local time is correct here.
+function fmtDateTime(iso) {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
 }
 function presetRange(p, minDate, maxDate) {
   const end = new Date(maxDate), start = new Date(maxDate);
@@ -345,6 +351,10 @@ export default function Dashboard() {
   }, [tab, typeFilter, preset, range, activeViewId, search, topicFilter]);
 
   const content = useMemo(() => rawContent.map((r) => mapContentRow(r, categories)), [rawContent, categories]);
+  const lastSynced = useMemo(() => {
+    const stamps = rawContent.map((r) => r.updated_at).filter(Boolean);
+    return stamps.length ? stamps.reduce((a, b) => (b > a ? b : a)) : null;
+  }, [rawContent]);
   const MIN_DATE = useMemo(() => (content.length ? content.reduce((a, p) => (p.date < a ? p.date : a), content[0].date) : null), [content]);
   const MAX_DATE = useMemo(() => (content.length ? content.reduce((a, p) => (p.date > a ? p.date : a), content[0].date) : null), [content]);
 
@@ -517,6 +527,7 @@ export default function Dashboard() {
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}><Gem size={13} color={T.gold} /><span style={{ fontSize: 10.5, letterSpacing: "0.16em", textTransform: "uppercase", color: T.gold }}>Ela Eternal Jewels</span></div>
           <h1 style={{ fontFamily: "'Fraunces', serif", fontWeight: 500, fontSize: 28, margin: 0 }}>@neha_thefinejeweler</h1>
           <div style={{ color: T.muted, fontSize: 12, marginTop: 3 }}>{posts.length} items · {fmtDate(range.start)} → {fmtDate(range.end)}</div>
+          {lastSynced && <div style={{ color: T.muted, fontSize: 10.5, marginTop: 3 }}>Data last synced {fmtDateTime(lastSynced)}</div>}
         </div>
         <div style={{ display: "flex", gap: 3, background: T.surface, border: `1px solid ${T.line}`, padding: 3, ...facet(6) }}>
           {[["overview", "Overview"], ["content", "Content"], ["explore", "Content Explorer"]].map(([k, l]) => (
@@ -653,6 +664,11 @@ export default function Dashboard() {
                           <td style={{ padding: "7px 13px", color: T.muted, fontSize: 11.5, display: "flex", alignItems: "center", gap: 6 }}>
                             <TypeIcon type={it.contentType} size={10} />
                             <span style={{ maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.caption}</span>
+                            {it.permalink && (
+                              <a href={it.permalink} target="_blank" rel="noopener noreferrer" title="View on Instagram" style={{ color: T.muted, flexShrink: 0 }}>
+                                <ExternalLink size={10} />
+                              </a>
+                            )}
                           </td>
                           <td style={{ padding: "7px 13px", textAlign: "right", color: T.muted, fontSize: 11 }}>{fmtDate(it.date)}</td>
                           <td style={{ padding: "7px 13px", textAlign: "right", fontSize: 11.5 }}>{it.likes}</td>
@@ -677,6 +693,11 @@ export default function Dashboard() {
                   <Cover url={p.cover} color={p.topicColor} />
                   <span style={{ position: "absolute", top: 7, left: 7, fontSize: 10, fontWeight: 700, color: T.bg, background: T.gold, padding: "1px 6px" }}>#{i + 1}</span>
                   <span style={{ position: "absolute", top: 7, right: 7, display: "flex", alignItems: "center", gap: 3, fontSize: 10, color: T.ivory, background: "rgba(0,0,0,0.5)", padding: "2px 6px" }}><TypeIcon type={p.contentType} size={9} />{p.contentType}</span>
+                  {p.permalink && (
+                    <a href={p.permalink} target="_blank" rel="noopener noreferrer" title="View on Instagram" style={{ position: "absolute", bottom: 7, right: 7, display: "flex", alignItems: "center", justifyContent: "center", width: 20, height: 20, borderRadius: "50%", background: "rgba(0,0,0,0.55)", color: T.ivory }}>
+                      <ExternalLink size={10} />
+                    </a>
+                  )}
                 </div>
                 <div style={{ padding: "10px 11px 12px" }}>
                   <div style={{ fontSize: 11.5, color: T.ivory, marginBottom: 5, lineHeight: 1.35, height: 45, overflow: "hidden" }}>{p.caption}</div>
@@ -817,7 +838,16 @@ export default function Dashboard() {
                       {dk === "date" && fmtDate(p.date)}
                     </td>
                   ))}
-                  <td style={{ padding: "8px 12px", color: T.ivory, maxWidth: 280 }}>{p.caption}</td>
+                  <td style={{ padding: "8px 12px", color: T.ivory, maxWidth: 280 }}>
+                    <span style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
+                      <span>{p.caption}</span>
+                      {p.permalink && (
+                        <a href={p.permalink} target="_blank" rel="noopener noreferrer" title="View on Instagram" style={{ color: T.muted, flexShrink: 0, marginTop: 1 }}>
+                          <ExternalLink size={11} />
+                        </a>
+                      )}
+                    </span>
+                  </td>
                   {explorerMetrics.map((mk) => <td key={mk} style={{ padding: "8px 12px", textAlign: "right" }}>{fmt(p[mk])}</td>)}
                 </tr>))}
               </tbody>
