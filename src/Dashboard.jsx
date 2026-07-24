@@ -56,6 +56,14 @@ const SUGGESTED_VIEWS = [
 ];
 
 /* ============ HELPERS ============ */
+const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+// Parses "YYYY-MM-DD" manually (no Date object) so display never shifts a day from timezone conversion.
+function fmtDate(iso, { year = true } = {}) {
+  if (!iso) return "—";
+  const [y, m, d] = iso.split("-").map(Number);
+  const day = `${MONTH_ABBR[m - 1]} ${d}`;
+  return year ? `${day}, ${y}` : day;
+}
 function presetRange(p, minDate, maxDate) {
   const end = new Date(maxDate), start = new Date(maxDate);
   if (p === "7d") start.setDate(end.getDate() - 6);
@@ -185,7 +193,7 @@ function Tip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
   return (
     <div style={{ background: T.surface2, border: `1px solid ${T.gold}`, padding: "9px 11px", fontSize: 11.5, color: T.ivory }}>
-      <div style={{ color: T.gold, marginBottom: 5, fontWeight: 600 }}>{label}</div>
+      <div style={{ color: T.gold, marginBottom: 5, fontWeight: 600 }}>{fmtDate(label)}</div>
       {payload.map((p, i) => <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 14, color: T.muted }}><span>{p.name}</span><span style={{ color: T.ivory }}>{fmt(p.value)}</span></div>)}
     </div>
   );
@@ -508,7 +516,7 @@ export default function Dashboard() {
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}><Gem size={13} color={T.gold} /><span style={{ fontSize: 10.5, letterSpacing: "0.16em", textTransform: "uppercase", color: T.gold }}>Ela Eternal Jewels</span></div>
           <h1 style={{ fontFamily: "'Fraunces', serif", fontWeight: 500, fontSize: 28, margin: 0 }}>@neha_thefinejeweler</h1>
-          <div style={{ color: T.muted, fontSize: 12, marginTop: 3 }}>{posts.length} items · {range.start} → {range.end}</div>
+          <div style={{ color: T.muted, fontSize: 12, marginTop: 3 }}>{posts.length} items · {fmtDate(range.start)} → {fmtDate(range.end)}</div>
         </div>
         <div style={{ display: "flex", gap: 3, background: T.surface, border: `1px solid ${T.line}`, padding: 3, ...facet(6) }}>
           {[["overview", "Overview"], ["content", "Content"], ["explore", "Content Explorer"]].map(([k, l]) => (
@@ -553,7 +561,7 @@ export default function Dashboard() {
                 <AreaChart data={daily}>
                   <defs><linearGradient id="fg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={T.gold} stopOpacity={0.35} /><stop offset="100%" stopColor={T.gold} stopOpacity={0} /></linearGradient></defs>
                   <CartesianGrid stroke={T.line} vertical={false} />
-                  <XAxis dataKey="date" tick={{ fontSize: 10, fill: T.muted }} axisLine={{ stroke: T.line }} tickLine={false} minTickGap={40} />
+                  <XAxis dataKey="date" tickFormatter={(d) => fmtDate(d, { year: false })} tick={{ fontSize: 10, fill: T.muted }} axisLine={{ stroke: T.line }} tickLine={false} minTickGap={40} />
                   <YAxis tick={{ fontSize: 10, fill: T.muted }} axisLine={false} tickLine={false} width={44} domain={["dataMin - 20", "dataMax + 20"]} />
                   <Tooltip content={<Tip />} />
                   <Area type="monotone" dataKey="followers" name="Followers" stroke={T.gold} fill="url(#fg)" strokeWidth={2} />
@@ -646,7 +654,7 @@ export default function Dashboard() {
                             <TypeIcon type={it.contentType} size={10} />
                             <span style={{ maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.caption}</span>
                           </td>
-                          <td style={{ padding: "7px 13px", textAlign: "right", color: T.muted, fontSize: 11 }}>{it.date}</td>
+                          <td style={{ padding: "7px 13px", textAlign: "right", color: T.muted, fontSize: 11 }}>{fmtDate(it.date)}</td>
                           <td style={{ padding: "7px 13px", textAlign: "right", fontSize: 11.5 }}>{it.likes}</td>
                           <td style={{ padding: "7px 13px", textAlign: "right", fontSize: 11.5 }}>{it.comments}</td>
                           <td style={{ padding: "7px 13px", textAlign: "right", fontSize: 11.5 }}>{it.shares}</td>
@@ -682,7 +690,7 @@ export default function Dashboard() {
                     <span style={{ display: "flex", alignItems: "center", gap: 3 }}><MessageCircle size={10} />{p.comments}</span>
                     {p.plays && <span style={{ display: "flex", alignItems: "center", gap: 3 }}><Eye size={10} />{fmt(p.plays)}</span>}
                   </div>
-                  <div style={{ fontSize: 10, color: T.muted, marginTop: 7, paddingTop: 7, borderTop: `1px solid ${T.line}` }}>{p.date} · Engagement {p.engagement}</div>
+                  <div style={{ fontSize: 10, color: T.muted, marginTop: 7, paddingTop: 7, borderTop: `1px solid ${T.line}` }}>{fmtDate(p.date)} · Engagement {p.engagement}</div>
                 </div>
               </div>
             ))}
@@ -806,7 +814,7 @@ export default function Dashboard() {
                     <td key={dk} style={{ padding: "8px 12px", color: T.muted, whiteSpace: "nowrap" }}>
                       {dk === "topic" && <span style={{ fontSize: 10.5, padding: "2px 7px", borderRadius: 3, background: `${p.topicColor}22`, color: p.topicColor }}>{p.topic}</span>}
                       {dk === "hashtags" && <span style={{ fontSize: 10.5 }}>{p.hashtags.join(" ") || "—"}</span>}
-                      {dk === "date" && p.date}
+                      {dk === "date" && fmtDate(p.date)}
                     </td>
                   ))}
                   <td style={{ padding: "8px 12px", color: T.ivory, maxWidth: 280 }}>{p.caption}</td>
