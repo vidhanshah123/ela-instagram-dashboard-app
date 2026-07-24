@@ -27,7 +27,7 @@ const PALETTE = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300
 const METRICS = [
   { key: "likes", label: "Likes", agg: "sum", icon: Heart, description: "Number of likes on this post/reel." },
   { key: "comments", label: "Comments", agg: "sum", icon: MessageCircle, description: "Number of comments on this post/reel." },
-  { key: "plays", label: "Plays", agg: "sum", icon: Eye, description: "Times this reel was played. Not applicable to image posts." },
+  { key: "plays", label: "Plays", agg: "sum", icon: Eye, description: "Times this content was played or displayed." },
   { key: "shares", label: "Shares", agg: "sum", icon: Share2, description: "Times this content was shared to Stories, DMs, or externally." },
   { key: "saves", label: "Saves", agg: "sum", icon: Bookmark, description: "Times this content was bookmarked/saved." },
   { key: "reach", label: "Reach", agg: "sum", icon: Users, description: "Unique accounts that saw this content at least once." },
@@ -150,6 +150,10 @@ function mapDailyRow(row) {
     following: row.following,
     netFollowerChange: row.net_follower_change,
     accountReach: row.account_reach,
+    reachReels: row.reach_reels,
+    reachPosts: row.reach_posts,
+    viewsReels: row.views_reels,
+    viewsPosts: row.views_posts,
   };
 }
 
@@ -524,6 +528,8 @@ export default function Dashboard() {
   const followerNow = accVal("followers"), followingNow = accVal("following");
   const netChange = accSum("netFollowerChange");
   const hasAccountReach = useMemo(() => daily.some((d) => d.accountReach !== null && d.accountReach !== undefined), [daily]);
+  const hasDedupReachByType = useMemo(() => daily.some((d) => d.reachReels != null || d.reachPosts != null), [daily]);
+  const hasViewsByType = useMemo(() => daily.some((d) => d.viewsReels != null || d.viewsPosts != null), [daily]);
 
   const ageGenderChartData = useMemo(() => {
     const rows = audienceSnapshot?.age_gender ?? [];
@@ -649,7 +655,23 @@ export default function Dashboard() {
             {hasAccountReach && (
               <KpiCard icon={Users} label="Distinct accounts reached" value={fmt(agg(daily, "accountReach", "sum"))} delta={pct(agg(daily, "accountReach", "sum"), agg(prevDaily, "accountReach", "sum"))} description="Meta's own de-duplicated daily reach, summed across the range — different from 'Total reach' above, which sums each post's own reach and double-counts anyone who saw more than one post. Still sums across days, so multi-day overlap isn't removed." />
             )}
+            {hasDedupReachByType && (
+              <>
+                <KpiCard icon={Video} label="Distinct reach — Reels" value={fmt(agg(daily, "reachReels", "sum"))} delta={pct(agg(daily, "reachReels", "sum"), agg(prevDaily, "reachReels", "sum"))} description="De-duplicated accounts reached by Reels specifically, summed across the range. Story is excluded from this breakdown." />
+                <KpiCard icon={ImageIcon} label="Distinct reach — Posts" value={fmt(agg(daily, "reachPosts", "sum"))} delta={pct(agg(daily, "reachPosts", "sum"), agg(prevDaily, "reachPosts", "sum"))} description="De-duplicated accounts reached by image/carousel Posts specifically, summed across the range. Story is excluded from this breakdown." />
+              </>
+            )}
           </div>
+
+          {hasViewsByType && (
+            <>
+              <SectionHeader eyebrow="Reach" title="Content views" note="De-duplicated at the account level, by content type. Story is excluded." />
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 30 }}>
+                <KpiCard icon={Video} label="Views — Reels" value={fmt(agg(daily, "viewsReels", "sum"))} delta={pct(agg(daily, "viewsReels", "sum"), agg(prevDaily, "viewsReels", "sum"))} description="Total times Reels were played or displayed, account-wide, within the selected range." />
+                <KpiCard icon={ImageIcon} label="Views — Posts" value={fmt(agg(daily, "viewsPosts", "sum"))} delta={pct(agg(daily, "viewsPosts", "sum"), agg(prevDaily, "viewsPosts", "sum"))} description="Total times image/carousel Posts were played or displayed, account-wide, within the selected range." />
+              </div>
+            </>
+          )}
 
           {audienceSnapshot && (
             <>
