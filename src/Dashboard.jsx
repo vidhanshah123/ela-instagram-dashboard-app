@@ -86,11 +86,9 @@ const VISUAL_REGISTRY = [
   { id: "whos-following", tab: "Overview", label: "Who's following" },
   { id: "topics-table", tab: "Content", label: "Topics" },
   { id: "top-performing-content", tab: "Content", label: "Top performing content" },
-  { id: "skip-rate-leaderboard", tab: "Content", label: "Skip rate leaderboard" },
+  { id: "skip-rate-leaderboard", tab: "Content", label: "Top Performing Hooks" },
   { id: "hashtag-performance", tab: "Content", label: "Hashtag performance" },
   { id: "duration-scatter", tab: "Content", label: "Reel duration vs. performance" },
-  { id: "category-sparklines", tab: "Content", label: "Category trend sparklines (Topics table column)" },
-  { id: "category-momentum", tab: "Content", label: "Category momentum (Topics table column)" },
   { id: "underperformer-flag", tab: "Content", label: "Under performers" },
   { id: "category-matrix", tab: "Content", label: "Category × content type matrix" },
 ];
@@ -422,6 +420,8 @@ function ContentCard({ p, rank, categories, onReassign, footer }) {
         <div style={{ display: "flex", gap: 9, fontSize: 10.5, color: T.muted, flexWrap: "wrap" }}>
           <span style={{ display: "flex", alignItems: "center", gap: 3 }}><Heart size={10} color={T.gold} />{p.likes}</span>
           <span style={{ display: "flex", alignItems: "center", gap: 3 }}><MessageCircle size={10} />{p.comments}</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 3 }}><Share2 size={10} />{p.shares}</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 3 }}><Bookmark size={10} />{p.saves}</span>
           {p.plays && <span style={{ display: "flex", alignItems: "center", gap: 3 }}><Eye size={10} />{fmt(p.plays)}</span>}
         </div>
         <div style={{ fontSize: 10, color: T.muted, marginTop: 7, paddingTop: 7, borderTop: `1px solid ${T.line}` }}>{fmtDate(p.date)} · {footer}</div>
@@ -707,7 +707,6 @@ export default function Dashboard() {
   const prevStart = range ? new Date(new Date(range.start).getTime() - spanMs - 86400000).toISOString().slice(0, 10) : null;
   const prevEnd = range ? new Date(new Date(range.start).getTime() - 86400000).toISOString().slice(0, 10) : null;
   const prevDaily = useMemo(() => (prevStart ? dailyRows.filter((d) => d.date >= prevStart && d.date <= prevEnd) : []), [dailyRows, prevStart, prevEnd]);
-  const prevPosts = useMemo(() => (prevStart ? content.filter((p) => p.date >= prevStart && p.date <= prevEnd && (typeFilter === "All" || p.contentType === typeFilter)) : []), [content, prevStart, prevEnd, typeFilter]);
 
   const pct = (a, b) => (b ? +(((a - b) / b) * 100).toFixed(1) : (a ? null : 0));
   const accVal = (key) => ({ now: agg(daily, key, "last"), prev: agg(prevDaily, key, "last") });
@@ -724,44 +723,27 @@ export default function Dashboard() {
   const postsOnly = useMemo(() => posts.filter((p) => p.contentType === "Post"), [posts]);
   const reelsOnly = useMemo(() => posts.filter((p) => p.contentType === "Reel"), [posts]);
 
-  // Item 20 dependency: same-length prior-period average engagement per
-  // category, for a momentum delta next to each Topics row.
-  const prevTopicAvg = useMemo(() => {
-    const g = {};
-    prevPosts.forEach((p) => (g[p.catId] = g[p.catId] || []).push(p));
-    const map = {};
-    Object.entries(g).forEach(([catId, arr]) => { map[catId] = arr.reduce((a, p) => a + p.engagement, 0) / arr.length; });
-    return map;
-  }, [prevPosts]);
-
   const topicRows = useMemo(() => {
     const g = {};
     posts.forEach((p) => (g[p.catId] = g[p.catId] || []).push(p));
     return categories.filter((c) => g[c.id]?.length).map((c) => {
       const arr = g[c.id];
-      // Item 13 dependency: weekly engagement totals for a sparkline.
-      const byWeek = {};
-      arr.forEach((p) => { const wk = weekStartOf(p.date); byWeek[wk] = (byWeek[wk] || 0) + p.engagement; });
-      const sparkline = Object.entries(byWeek).sort(([a], [b]) => a.localeCompare(b)).map(([week, engagement]) => ({ week, engagement }));
       const avgEngagement = +(arr.reduce((a, p) => a + p.engagement, 0) / arr.length).toFixed(1);
       return {
         catId: c.id, name: c.name, color: c.color, count: arr.length,
         likes: agg(arr, "likes", "sum"), comments: agg(arr, "comments", "sum"),
         shares: agg(arr, "shares", "sum"), saves: agg(arr, "saves", "sum"),
         avgEngagement,
-        prevAvgEngagement: prevTopicAvg[c.id] ?? null,
-        sparkline,
         items: arr.slice().sort((a, b) => b.engagement - a.engagement),
       };
     }).sort((a, b) => b.avgEngagement - a.avgEngagement);
-  }, [posts, categories, prevTopicAvg]);
+  }, [posts, categories]);
   const sortedTopicRows = useMemo(() => sortRows(topicRows, topicSort, { name: "string" }), [topicRows, topicSort]);
 
   // Item 8: skip-rate leaderboard (Reels only).
   const skipRateRanked = useMemo(() => {
     const withRate = reelsOnly.filter((p) => p.reelsSkipRate !== null && p.reelsSkipRate !== undefined);
-    const sorted = withRate.slice().sort((a, b) => a.reelsSkipRate - b.reelsSkipRate);
-    return { best: sorted.slice(0, 5), worst: sorted.slice(-5).reverse() };
+    return withRate.slice().sort((a, b) => a.reelsSkipRate - b.reelsSkipRate);
   }, [reelsOnly]);
 
   // Item 11: hashtag performance — explode hashtags, average engagement per tag.
@@ -1078,21 +1060,10 @@ export default function Dashboard() {
                 <Th label="Shares" sortKey="shares" sort={topicSort} setSort={setTopicSort} align="right" infoText={METRICS.find((m) => m.key === "shares").description} />
                 <Th label="Saves" sortKey="saves" sort={topicSort} setSort={setTopicSort} align="right" infoText={METRICS.find((m) => m.key === "saves").description} />
                 <Th label="Avg engagement" sortKey="avgEngagement" sort={topicSort} setSort={setTopicSort} align="right" infoText={METRICS.find((m) => m.key === "engagement").description} />
-                {!hiddenVisuals.includes("category-momentum") && (
-                  <th style={{ padding: "10px 13px", textAlign: "right", whiteSpace: "nowrap" }}>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>Momentum <HideControl id="category-momentum" confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide} label="the momentum column" /></span>
-                  </th>
-                )}
-                {!hiddenVisuals.includes("category-sparklines") && (
-                  <th style={{ padding: "10px 13px", textAlign: "right", whiteSpace: "nowrap" }}>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>Trend <HideControl id="category-sparklines" confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide} label="the trend column" /></span>
-                  </th>
-                )}
               </tr></thead>
               <tbody>
                 {sortedTopicRows.map((row) => {
                   const isOpen = expandedTopics.includes(row.catId);
-                  const momentum = pct(row.avgEngagement, row.prevAvgEngagement);
                   return (
                     <React.Fragment key={row.catId}>
                       <tr style={{ borderBottom: `1px solid ${T.line}`, cursor: "pointer" }} onClick={() => setExpandedTopics((s) => s.includes(row.catId) ? s.filter((x) => x !== row.catId) : [...s, row.catId])}>
@@ -1104,20 +1075,6 @@ export default function Dashboard() {
                         <td style={{ padding: "9px 13px", textAlign: "right" }}>{fmt(row.shares)}</td>
                         <td style={{ padding: "9px 13px", textAlign: "right" }}>{fmt(row.saves)}</td>
                         <td style={{ padding: "9px 13px", textAlign: "right", color: T.gold, fontWeight: 600 }}>{fmt(row.avgEngagement)}</td>
-                        {!hiddenVisuals.includes("category-momentum") && (
-                          <td style={{ padding: "9px 13px", textAlign: "right" }}><Delta value={momentum} /></td>
-                        )}
-                        {!hiddenVisuals.includes("category-sparklines") && (
-                          <td style={{ padding: "9px 13px", width: 90 }}>
-                            {row.sparkline.length >= 2 ? (
-                              <ResponsiveContainer width="100%" height={28}>
-                                <AreaChart data={row.sparkline}>
-                                  <Area type="monotone" dataKey="engagement" stroke={row.color} fill={row.color} fillOpacity={0.25} strokeWidth={1.5} isAnimationActive={false} />
-                                </AreaChart>
-                              </ResponsiveContainer>
-                            ) : <span style={{ fontSize: 10, color: T.muted }}>—</span>}
-                          </td>
-                        )}
                       </tr>
                       {isOpen && row.items.map((it) => (
                         <tr key={it.id} style={{ borderBottom: `1px solid ${T.line}`, background: T.surface2 }}>
@@ -1137,8 +1094,6 @@ export default function Dashboard() {
                           <td style={{ padding: "7px 13px", textAlign: "right", fontSize: 11.5 }}>{it.shares}</td>
                           <td style={{ padding: "7px 13px", textAlign: "right", fontSize: 11.5 }}>{it.saves}</td>
                           <td style={{ padding: "7px 13px", textAlign: "right", fontSize: 11.5, color: T.gold }}>{it.engagement}</td>
-                          {!hiddenVisuals.includes("category-momentum") && <td style={{ padding: "7px 13px" }}></td>}
-                          {!hiddenVisuals.includes("category-sparklines") && <td style={{ padding: "7px 13px" }}></td>}
                         </tr>
                       ))}
                     </React.Fragment>
@@ -1157,27 +1112,13 @@ export default function Dashboard() {
             </div>
           </Section>
 
-          <Section id="skip-rate-leaderboard" eyebrow="Reels" title="Skip rate leaderboard" insight="Reels only. Lowest skip rate = best hooks (fewest people leaving in the first 3 seconds); highest = openings worth revisiting." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <div>
-                <div style={{ fontSize: 10.5, color: T.sage, marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Best hooks</div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 10 }}>
-                  {skipRateRanked.best.map((p) => (
-                    <ContentCard key={p.id} p={p} categories={categories} footer={`Skip rate ${p.reelsSkipRate}%`} />
-                  ))}
-                </div>
-                {!skipRateRanked.best.length && <div style={{ fontSize: 11.5, color: T.muted }}>No skip-rate data yet.</div>}
-              </div>
-              <div>
-                <div style={{ fontSize: 10.5, color: T.clay, marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Needs work</div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 10 }}>
-                  {skipRateRanked.worst.map((p) => (
-                    <ContentCard key={p.id} p={p} categories={categories} footer={`Skip rate ${p.reelsSkipRate}%`} />
-                  ))}
-                </div>
-                {!skipRateRanked.worst.length && <div style={{ fontSize: 11.5, color: T.muted }}>No skip-rate data yet.</div>}
-              </div>
+          <Section id="skip-rate-leaderboard" eyebrow="Reels" title="Top Performing Hooks" insight="Reels only, ranked by lowest skip rate first — fewest people leaving in the first 3 seconds." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(215px, 1fr))", gap: 12 }}>
+              {skipRateRanked.map((p, i) => (
+                <ContentCard key={p.id} p={p} rank={i + 1} categories={categories} footer={`Skip rate ${p.reelsSkipRate}%`} />
+              ))}
             </div>
+            {!skipRateRanked.length && <div style={{ fontSize: 11.5, color: T.muted }}>No skip-rate data yet.</div>}
           </Section>
 
           <Section id="hashtag-performance" eyebrow="Content strategy" title="Hashtag performance" insight="Average engagement of posts/reels using each hashtag (tags used only once are excluded — not enough samples to mean anything)." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
