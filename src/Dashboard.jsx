@@ -83,6 +83,7 @@ const SUGGESTED_VIEWS = [
 const VISUAL_REGISTRY = [
   { id: "follower-history", tab: "Overview", label: "Follower count history" },
   { id: "posting-streak", tab: "Overview", label: "Posting consistency" },
+  { id: "whos-following", tab: "Overview", label: "Who's following" },
   { id: "skip-rate-leaderboard", tab: "Content", label: "Skip rate leaderboard" },
   { id: "top-posts-new-followers", tab: "Content", label: "Top posts by new followers" },
   { id: "watch-time-efficiency", tab: "Content", label: "Watch-time efficiency" },
@@ -318,14 +319,14 @@ function EditableInsight({ id, fallback }) {
 // Every new/optional visual is wrapped in this so it can be explained
 // (self-editable via EditableInsight) and hidden/restored without
 // touching the section's own layout code.
-function Section({ id, eyebrow, title, insight, hiddenVisuals, confirmHideId, onRequestHide, onConfirmHide, onCancelHide, children }) {
+function Section({ id, eyebrow, title, insight, noEdit, hiddenVisuals, confirmHideId, onRequestHide, onConfirmHide, onCancelHide, children }) {
   if (hiddenVisuals.includes(id)) return null;
   return (
     <div style={{ marginBottom: 30 }}>
       <SectionHeader
         eyebrow={eyebrow}
         title={title}
-        note={<EditableInsight id={id} fallback={insight} />}
+        note={noEdit ? insight : <EditableInsight id={id} fallback={insight} />}
         right={<HideControl id={id} confirmHideId={confirmHideId} onRequestHide={onRequestHide} onConfirmHide={onConfirmHide} onCancelHide={onCancelHide} label="this section" />}
       />
       {children}
@@ -334,16 +335,16 @@ function Section({ id, eyebrow, title, insight, hiddenVisuals, confirmHideId, on
 }
 // Lighter-weight than Section: a small inline label instead of a full
 // SectionHeader, for visuals nested under a shared parent title (e.g. the
-// follower history/net-change charts living under "Follower activity").
-// Still hideable and its description still self-editable.
-function SubBlock({ id, label, insight, hiddenVisuals, confirmHideId, onRequestHide, onConfirmHide, onCancelHide, children }) {
+// follower history chart living under "Follower activity").
+// Still hideable; description is self-editable unless noEdit is set.
+function SubBlock({ id, label, insight, noEdit, hiddenVisuals, confirmHideId, onRequestHide, onConfirmHide, onCancelHide, children }) {
   if (hiddenVisuals.includes(id)) return null;
   return (
     <div style={{ marginBottom: 20 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 8, gap: 12, flexWrap: "wrap" }}>
         <div style={{ fontFamily: "'Fraunces', serif", fontWeight: 500, fontSize: 20, color: T.ivory }}>{label}</div>
         <div style={{ display: "flex", alignItems: "flex-end", gap: 10 }}>
-          <EditableInsight id={id} fallback={insight} />
+          {!noEdit && <EditableInsight id={id} fallback={insight} />}
           <HideControl id={id} confirmHideId={confirmHideId} onRequestHide={onRequestHide} onConfirmHide={onConfirmHide} onCancelHide={onCancelHide} label="this chart" />
         </div>
       </div>
@@ -925,7 +926,7 @@ export default function Dashboard() {
       {tab === "overview" && (
         <>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12, marginBottom: 30 }}>
-            <Section id="posting-streak" eyebrow="Audience" title="Posting consistency" hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
+            <Section id="posting-streak" eyebrow="Audience" title="Posting consistency" noEdit hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
               <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 13px", ...facet(11) }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <Flame size={18} color={T.gold} />
@@ -944,7 +945,7 @@ export default function Dashboard() {
           </div>
 
           <div style={{ marginBottom: 10 }}>
-            <SubBlock id="follower-history" label="Follower count history" hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
+            <SubBlock id="follower-history" label="Follower count history" noEdit hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
               <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 6px", ...facet(10) }}>
                 {daily.length < 2 ? (
                   <div style={{ height: 200, display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: 12, textAlign: "center", padding: "0 20px" }}>
@@ -967,9 +968,8 @@ export default function Dashboard() {
           </div>
 
           {audienceSnapshot && (
-            <>
-              <SectionHeader eyebrow="Audience" title="Who's following" />
-              <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 12, marginBottom: 30 }}>
+            <Section id="whos-following" eyebrow="Audience" title="Who's following" noEdit hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
+              <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 12 }}>
                 <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 6px", ...facet(10) }}>
                   <div style={{ fontSize: 10.5, color: T.muted, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>Age &amp; gender</div>
                   <ResponsiveContainer width="100%" height={220}>
@@ -997,7 +997,7 @@ export default function Dashboard() {
                   </div>
                 </div>
               </div>
-            </>
+            </Section>
           )}
 
         </>
