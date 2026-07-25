@@ -84,7 +84,6 @@ const SUGGESTED_VIEWS = [
 const VISUAL_REGISTRY = [
   { id: "follower-history", tab: "Overview", label: "Follower count history" },
   { id: "best-day-of-week", tab: "Overview", label: "Best day to post" },
-  { id: "bio-link-funnel-trend", tab: "Overview", label: "Profile funnel trend" },
   { id: "posting-streak", tab: "Overview", label: "Posting consistency" },
   { id: "skip-rate-leaderboard", tab: "Content", label: "Skip rate leaderboard" },
   { id: "top-posts-new-followers", tab: "Content", label: "Top posts by new followers" },
@@ -826,20 +825,6 @@ export default function Dashboard() {
   }, [posts]);
   const hasBestDayData = useMemo(() => bestDayData.some((b) => b.count > 0), [bestDayData]);
 
-  // Item 21: profile funnel trend — Posts' profile_visits/profile_activity
-  // summed per week, so you can see if profile-visit-driving content is
-  // increasing or fading rather than only seeing the range total.
-  const profileFunnelWeekly = useMemo(() => {
-    const byWeek = {};
-    postsOnly.forEach((p) => {
-      const key = weekStartOf(p.date);
-      byWeek[key] = byWeek[key] || { week: key, visits: 0, actions: 0 };
-      byWeek[key].visits += p.profileVisits ?? 0;
-      byWeek[key].actions += p.profileActivity ?? 0;
-    });
-    return Object.values(byWeek).sort((a, b) => a.week.localeCompare(b.week));
-  }, [postsOnly]);
-
   // Item 24: posting streak — consecutive weeks (not days; this account
   // doesn't post daily) with at least one item, walking back from the most
   // recent. Deliberately uses ALL content, not the range-filtered `posts`,
@@ -1026,30 +1011,6 @@ export default function Dashboard() {
               </div>
             </>
           )}
-
-          <Section id="bio-link-funnel-trend" eyebrow="Profile funnel" title="Profile funnel trend" insight="Posts' profile visits and profile actions, bucketed by week — shows whether profile-visit-driving content is increasing or fading, not just the range total." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
-            <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 6px", ...facet(10) }}>
-              {profileFunnelWeekly.length < 2 ? (
-                <div style={{ height: 160, display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: 12, textAlign: "center", padding: "0 20px" }}>Not enough Posts in range to show a weekly trend.</div>
-              ) : (
-                <ResponsiveContainer width="100%" height={180}>
-                  <AreaChart data={profileFunnelWeekly}>
-                    <defs>
-                      <linearGradient id="pfv" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={T.gold} stopOpacity={0.3} /><stop offset="100%" stopColor={T.gold} stopOpacity={0} /></linearGradient>
-                      <linearGradient id="pfa" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={T.clay} stopOpacity={0.3} /><stop offset="100%" stopColor={T.clay} stopOpacity={0} /></linearGradient>
-                    </defs>
-                    <CartesianGrid stroke={T.line} vertical={false} />
-                    <XAxis dataKey="week" tickFormatter={(d) => fmtDate(d, { year: false })} tick={{ fontSize: 10, fill: T.muted }} axisLine={{ stroke: T.line }} tickLine={false} minTickGap={40} />
-                    <YAxis tick={{ fontSize: 10, fill: T.muted }} axisLine={false} tickLine={false} width={36} />
-                    <Tooltip content={<Tip />} />
-                    <Legend wrapperStyle={{ fontSize: 10.5, color: T.muted }} />
-                    <Area type="monotone" dataKey="visits" name="Profile visits" stroke={T.gold} fill="url(#pfv)" strokeWidth={2} />
-                    <Area type="monotone" dataKey="actions" name="Profile actions" stroke={T.clay} fill="url(#pfa)" strokeWidth={2} />
-                  </AreaChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-          </Section>
 
           <Section id="best-day-of-week" eyebrow="Content strategy" title="Best day to post" insight="Average engagement per weekday, across all posts/reels in the selected range. Higher bars = days that have historically performed better." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
             <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 6px", ...facet(10) }}>
