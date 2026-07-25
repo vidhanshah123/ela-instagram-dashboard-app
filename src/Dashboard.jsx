@@ -341,7 +341,7 @@ function SubBlock({ id, label, insight, hiddenVisuals, confirmHideId, onRequestH
   return (
     <div style={{ marginBottom: 20 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 8, gap: 12, flexWrap: "wrap" }}>
-        <div style={{ fontSize: 11.5, fontWeight: 600, color: T.ivory }}>{label}</div>
+        <div style={{ fontFamily: "'Fraunces', serif", fontWeight: 500, fontSize: 20, color: T.ivory }}>{label}</div>
         <div style={{ display: "flex", alignItems: "flex-end", gap: 10 }}>
           <EditableInsight id={id} fallback={insight} />
           <HideControl id={id} confirmHideId={confirmHideId} onRequestHide={onRequestHide} onConfirmHide={onConfirmHide} onCancelHide={onCancelHide} label="this chart" />
@@ -925,7 +925,7 @@ export default function Dashboard() {
       {tab === "overview" && (
         <>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12, marginBottom: 30 }}>
-            <Section id="posting-streak" eyebrow="Audience" title="Posting consistency" insight="Consecutive weeks (not days — this account doesn't post daily) with at least one piece of content, counted back from the most recent post. Reflects all-time data, not the date range above." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
+            <Section id="posting-streak" eyebrow="Audience" title="Posting consistency" hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
               <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 13px", ...facet(11) }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <Flame size={18} color={T.gold} />
@@ -944,7 +944,7 @@ export default function Dashboard() {
           </div>
 
           <div style={{ marginBottom: 10 }}>
-            <SubBlock id="follower-history" label="Follower count history" insight="Cumulative followers over time, from daily snapshots." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
+            <SubBlock id="follower-history" label="Follower count history" hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
               <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 6px", ...facet(10) }}>
                 {daily.length < 2 ? (
                   <div style={{ height: 200, display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: 12, textAlign: "center", padding: "0 20px" }}>
