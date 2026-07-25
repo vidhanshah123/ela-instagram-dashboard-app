@@ -84,9 +84,7 @@ const SUGGESTED_VIEWS = [
 const VISUAL_REGISTRY = [
   { id: "follower-history", tab: "Overview", label: "Follower count history" },
   { id: "new-followers-content", tab: "Overview", label: "New followers from content" },
-  { id: "profile-funnel", tab: "Overview", label: "Profile funnel" },
   { id: "best-day-of-week", tab: "Overview", label: "Best day to post" },
-  { id: "content-mix-trend", tab: "Overview", label: "Content mix over time" },
   { id: "bio-link-funnel-trend", tab: "Overview", label: "Profile funnel trend" },
   { id: "posting-streak", tab: "Overview", label: "Posting consistency" },
   { id: "skip-rate-leaderboard", tab: "Content", label: "Skip rate leaderboard" },
@@ -817,20 +815,6 @@ export default function Dashboard() {
       .slice(0, 8);
   }, [audienceSnapshot]);
 
-  // Item 5: profile funnel (Posts only — Reels don't support these metrics).
-  const funnelStages = useMemo(() => {
-    const reachSum = agg(postsOnly, "reach", "sum");
-    const visits = agg(postsOnly, "profileVisits", "sum");
-    const actions = agg(postsOnly, "profileActivity", "sum");
-    const followers = agg(postsOnly, "newFollowers", "sum");
-    return [
-      { label: "Reach (Posts)", value: reachSum, icon: Users, convPct: null },
-      { label: "Profile visits", value: visits, icon: ExternalLink, convPct: reachSum ? (visits / reachSum) * 100 : null },
-      { label: "Profile actions", value: actions, icon: ExternalLink, convPct: visits ? (actions / visits) * 100 : null },
-      { label: "New followers", value: followers, icon: TrendingUp, convPct: actions ? (followers / actions) * 100 : null },
-    ];
-  }, [postsOnly]);
-
   // Item 6: best day of week — bucket by weekday, average engagement per bucket.
   const bestDayData = useMemo(() => {
     const buckets = WEEKDAY_NAMES.map((day) => ({ day, total: 0, count: 0 }));
@@ -842,17 +826,6 @@ export default function Dashboard() {
     return buckets.map((b) => ({ day: b.day, avgEngagement: b.count ? +(b.total / b.count).toFixed(1) : 0, count: b.count }));
   }, [posts]);
   const hasBestDayData = useMemo(() => bestDayData.some((b) => b.count > 0), [bestDayData]);
-
-  // Item 7: content mix over time — Reels vs. Posts published per week.
-  const contentMixWeekly = useMemo(() => {
-    const byWeek = {};
-    posts.forEach((p) => {
-      const key = weekStartOf(p.date);
-      byWeek[key] = byWeek[key] || { week: key, Reel: 0, Post: 0 };
-      byWeek[key][p.contentType] += 1;
-    });
-    return Object.values(byWeek).sort((a, b) => a.week.localeCompare(b.week));
-  }, [posts]);
 
   // Item 21: profile funnel trend — Posts' profile_visits/profile_activity
   // summed per week, so you can see if profile-visit-driving content is
@@ -1061,25 +1034,6 @@ export default function Dashboard() {
             </div>
           </Section>
 
-          <Section id="profile-funnel" eyebrow="Profile funnel" title="Reach → profile → follow" insight="Posts only. Each stage's % is the conversion rate from the stage above it — where the funnel narrows most is where there's the most room to improve." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
-            <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px", ...facet(10) }}>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {funnelStages.map((s, i) => (
-                  <div key={s.label} style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <div style={{ width: 26, height: 26, borderRadius: "50%", background: "rgba(203,163,92,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><s.icon size={13} color={T.gold} /></div>
-                    <div style={{ flex: 1, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span style={{ fontSize: 12.5, color: T.ivory }}>{s.label}</span>
-                      <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        {s.convPct !== null && <span style={{ fontSize: 11, color: T.muted }}>{s.convPct.toFixed(1)}%</span>}
-                        <span style={{ fontFamily: "'Fraunces', serif", fontSize: 16, color: T.ivory, minWidth: 40, textAlign: "right" }}>{fmt(s.value)}</span>
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </Section>
-
           <Section id="bio-link-funnel-trend" eyebrow="Profile funnel" title="Profile funnel trend" insight="Posts' profile visits and profile actions, bucketed by week — shows whether profile-visit-driving content is increasing or fading, not just the range total." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
             <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 6px", ...facet(10) }}>
               {profileFunnelWeekly.length < 2 ? (
@@ -1122,25 +1076,6 @@ export default function Dashboard() {
             </div>
           </Section>
 
-          <Section id="content-mix-trend" eyebrow="Content strategy" title="Content mix over time" insight="Reels vs. Posts published per week — a quick sanity check on whether posting strategy balance is drifting from what you intend." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
-            <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 6px", ...facet(10) }}>
-              {contentMixWeekly.length < 1 ? (
-                <div style={{ height: 160, display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: 12 }}>No posts in range yet.</div>
-              ) : (
-                <ResponsiveContainer width="100%" height={180}>
-                  <BarChart data={contentMixWeekly}>
-                    <CartesianGrid stroke={T.line} vertical={false} />
-                    <XAxis dataKey="week" tickFormatter={(d) => fmtDate(d, { year: false })} tick={{ fontSize: 10, fill: T.muted }} axisLine={{ stroke: T.line }} tickLine={false} minTickGap={40} />
-                    <YAxis tick={{ fontSize: 10, fill: T.muted }} axisLine={false} tickLine={false} width={30} allowDecimals={false} />
-                    <Tooltip content={<Tip />} />
-                    <Legend wrapperStyle={{ fontSize: 10.5, color: T.muted }} />
-                    <Bar dataKey="Reel" name="Reels" stackId="mix" fill={T.gold} radius={0} />
-                    <Bar dataKey="Post" name="Posts" stackId="mix" fill={T.sage} radius={[2, 2, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-          </Section>
         </>
       )}
 
