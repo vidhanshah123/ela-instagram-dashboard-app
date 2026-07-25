@@ -6,10 +6,10 @@ import {
 } from "recharts";
 import {
   TrendingUp, TrendingDown, Heart, MessageCircle, Eye, Clock, Gem,
-  Calendar, Video, Image as ImageIcon, Search, X, Info, Users,
+  Calendar, Video, Image as ImageIcon, Info, Users,
   Share2, Bookmark, ChevronRight, ChevronDown,
-  Pencil, Plus, Check, Sliders, Columns, Save, Trash2, RotateCcw, FolderOpen, ExternalLink,
-  EyeOff, Flame, Award, AlertTriangle,
+  Pencil, Plus, Check, ExternalLink,
+  EyeOff, Flame,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 
@@ -58,26 +58,6 @@ const COUNTRY_NAMES = {
   PK: "Pakistan", BD: "Bangladesh", PH: "Philippines", ID: "Indonesia", NG: "Nigeria",
   ZA: "South Africa", RO: "Romania",
 };
-const DIMENSION_FIELDS = [
-  { key: "topic", label: "Topic" },
-  { key: "hashtags", label: "Hashtags" },
-  { key: "date", label: "Date" },
-];
-// Client-only starter presets — shown until the user has saved their own views.
-const SUGGESTED_VIEWS = [
-  {
-    name: "Top Reels — last 30 days",
-    config: { search: "", topicFilter: [], typeFilter: "Reel", preset: "30d", explorerDims: ["topic"], explorerMetrics: ["likes", "comments", "plays", "engagement"], explorerSort: { key: "engagement", dir: "desc" } },
-  },
-  {
-    name: "All posts by topic",
-    config: { search: "", topicFilter: [], typeFilter: "All", preset: "all", explorerDims: ["topic", "date"], explorerMetrics: ["likes", "comments", "engagement"], explorerSort: { key: "topic", dir: "asc" } },
-  },
-  {
-    name: "This week's activity",
-    config: { search: "", topicFilter: [], typeFilter: "All", preset: "7d", explorerDims: ["date", "topic"], explorerMetrics: ["likes", "comments", "shares", "saves"], explorerSort: { key: "date", dir: "desc" } },
-  },
-];
 // Every hideable visual, for the "Manage hidden" restore panel — the
 // single source of truth for id -> human label across both tabs.
 const VISUAL_REGISTRY = [
@@ -443,34 +423,17 @@ export default function Dashboard() {
   const [rawContent, setRawContent] = useState([]);
   const [dailyRows, setDailyRows] = useState([]);
   const [categories, setCategories] = useState([]);
-  const [savedViews, setSavedViews] = useState([]);
   const [audienceSnapshot, setAudienceSnapshot] = useState(null);
 
   const [range, setRange] = useState(null);
   const [preset, setPreset] = useState(() => readUrlParams().get("range") || "all");
   const [tab, setTab] = useState(() => readUrlParams().get("tab") || "overview");
   const [typeFilter, setTypeFilter] = useState(() => readUrlParams().get("type") || "All");
-  const [search, setSearch] = useState(() => readUrlParams().get("q") || "");
-  const [topicFilter, setTopicFilter] = useState(() => {
-    const t = readUrlParams().get("topics");
-    return t ? t.split(",") : [];
-  });
   const [expandedTopics, setExpandedTopics] = useState([]);
-  const [explorerMetrics, setExplorerMetrics] = useState(["likes", "comments", "plays", "engagement"]);
-  const [explorerDims, setExplorerDims] = useState(["topic"]);
   const [topicSort, setTopicSort] = useState({ key: "avgEngagement", dir: "desc" });
-  const [explorerSort, setExplorerSort] = useState({ key: "date", dir: "desc" });
   const [editingCat, setEditingCat] = useState(null);
   const [newCatName, setNewCatName] = useState("");
   const [showManage, setShowManage] = useState(false);
-  const [viewsOpen, setViewsOpen] = useState(false);
-  const [newViewName, setNewViewName] = useState("");
-  const [editingView, setEditingView] = useState(null);
-  const [activeViewId, setActiveViewId] = useState(null);
-  const [confirmDeleteView, setConfirmDeleteView] = useState(null);
-  const [selectedIds, setSelectedIds] = useState([]);
-  const [bulkCatId, setBulkCatId] = useState("");
-  const [activeSuggestion, setActiveSuggestion] = useState(null);
   const [hiddenVisuals, setHiddenVisuals] = useState([]);
   const [confirmHideId, setConfirmHideId] = useState(null);
   const [manageHiddenOpen, setManageHiddenOpen] = useState(false);
@@ -479,43 +442,28 @@ export default function Dashboard() {
   useEffect(() => {
     (async () => {
       try {
-        const [contentRes, dailyRes, catRes, viewsRes] = await Promise.all([
+        const [contentRes, dailyRes, catRes] = await Promise.all([
           supabase.from("content").select("*").order("post_date", { ascending: false }),
           supabase.from("daily_metrics").select("*").order("metric_date", { ascending: true }),
           supabase.from("categories").select("*"),
-          supabase.from("saved_views").select("*"),
         ]);
         if (contentRes.error) throw contentRes.error;
         if (dailyRes.error) throw dailyRes.error;
         if (catRes.error) throw catRes.error;
-        if (viewsRes.error) throw viewsRes.error;
 
         setRawContent(contentRes.data ?? []);
         setDailyRows((dailyRes.data ?? []).map(mapDailyRow));
         setCategories(catRes.data ?? []);
-        setSavedViews(viewsRes.data ?? []);
 
         const params = readUrlParams();
-        const viewId = params.get("view");
-        const view = viewId ? (viewsRes.data ?? []).find((v) => v.id === viewId) : null;
-        let effectivePreset = view?.config?.preset || params.get("range") || "all";
-        if (view) {
-          const cfg = view.config ?? {};
-          setSearch(cfg.search ?? "");
-          setTopicFilter(cfg.topicFilter ?? []);
-          setTypeFilter(cfg.typeFilter ?? "All");
-          setExplorerDims(cfg.explorerDims ?? ["topic"]);
-          setExplorerMetrics(cfg.explorerMetrics ?? ["likes", "comments", "plays", "engagement"]);
-          setExplorerSort(cfg.explorerSort ?? { key: "date", dir: "desc" });
-          setActiveViewId(view.id);
-        }
+        const effectivePreset = params.get("range") || "all";
 
         const dates = (contentRes.data ?? []).map((r) => r.post_date);
         if (dates.length) {
           const minDate = dates.reduce((a, b) => (b < a ? b : a));
           const maxDate = dates.reduce((a, b) => (b > a ? b : a));
           const urlStart = params.get("start"), urlEnd = params.get("end");
-          if (!view && urlStart && urlEnd) {
+          if (urlStart && urlEnd) {
             setRange({ start: urlStart, end: urlEnd });
             setPreset("custom");
           } else {
@@ -596,7 +544,7 @@ export default function Dashboard() {
     }
   };
 
-  // Keep the URL in sync so filters/tab/view are shareable and survive a refresh.
+  // Keep the URL in sync so filters/tab are shareable and survive a refresh.
   useEffect(() => {
     if (!range) return;
     const params = new URLSearchParams();
@@ -608,13 +556,10 @@ export default function Dashboard() {
     } else if (preset !== "all") {
       params.set("range", preset);
     }
-    if (activeViewId) params.set("view", activeViewId);
-    if (search) params.set("q", search);
-    if (topicFilter.length) params.set("topics", topicFilter.join(","));
     const qs = params.toString();
     const url = qs ? `${window.location.pathname}?${qs}` : window.location.pathname;
     window.history.replaceState(null, "", url);
-  }, [tab, typeFilter, preset, range, activeViewId, search, topicFilter]);
+  }, [tab, typeFilter, preset, range]);
 
   const content = useMemo(() => rawContent.map((r) => mapContentRow(r, categories)), [rawContent, categories]);
   const lastSynced = useMemo(() => {
@@ -628,14 +573,6 @@ export default function Dashboard() {
     setRawContent((rows) => rows.map((r) => (r.id === contentId ? { ...r, category_id: catId } : r)));
     const { error } = await supabase.from("content").update({ category_id: catId }).eq("id", contentId);
     if (error) console.error("Failed to reassign category:", error.message);
-  };
-  const bulkReassign = async (ids, catId) => {
-    if (!ids.length || !catId) return;
-    setRawContent((rows) => rows.map((r) => (ids.includes(r.id) ? { ...r, category_id: catId } : r)));
-    const { error } = await supabase.from("content").update({ category_id: catId }).in("id", ids);
-    if (error) console.error("Failed to bulk reassign category:", error.message);
-    setSelectedIds([]);
-    setBulkCatId("");
   };
   const renameCategory = async (id, name) => {
     setCategories((cats) => cats.map((c) => (c.id === id ? { ...c, name } : c)));
@@ -653,44 +590,6 @@ export default function Dashboard() {
     setNewCatName("");
   };
 
-  const currentExplorerConfig = () => ({ search, topicFilter, typeFilter, preset, explorerDims, explorerMetrics, explorerSort });
-  const applyExplorerConfig = (cfg) => {
-    setSearch(cfg.search ?? "");
-    setTopicFilter(cfg.topicFilter ?? []);
-    setTypeFilter(cfg.typeFilter ?? "All");
-    setExplorerDims(cfg.explorerDims ?? ["topic"]);
-    setExplorerMetrics(cfg.explorerMetrics ?? ["likes", "comments", "plays", "engagement"]);
-    setExplorerSort(cfg.explorerSort ?? { key: "date", dir: "desc" });
-    if (cfg.preset) { setPreset(cfg.preset); setRange(presetRange(cfg.preset, MIN_DATE, MAX_DATE)); }
-  };
-  const createView = async (name) => {
-    if (!name.trim()) return;
-    const { data, error } = await supabase.from("saved_views").insert({ name: name.trim(), config: currentExplorerConfig() }).select().single();
-    if (error) { console.error("Failed to save view:", error.message); return; }
-    setSavedViews((v) => [...v, data]);
-    setActiveViewId(data.id);
-    setNewViewName("");
-  };
-  const loadView = (view) => { applyExplorerConfig(view.config); setActiveViewId(view.id); setActiveSuggestion(null); };
-  const loadSuggestion = (sv) => { applyExplorerConfig(sv.config); setActiveViewId(null); setActiveSuggestion(sv.name); };
-  const updateView = async (id) => {
-    const config = currentExplorerConfig();
-    setSavedViews((v) => v.map((sv) => (sv.id === id ? { ...sv, config } : sv)));
-    const { error } = await supabase.from("saved_views").update({ config }).eq("id", id);
-    if (error) console.error("Failed to update view:", error.message);
-  };
-  const renameView = async (id, name) => {
-    setSavedViews((v) => v.map((sv) => (sv.id === id ? { ...sv, name } : sv)));
-    const { error } = await supabase.from("saved_views").update({ name }).eq("id", id);
-    if (error) console.error("Failed to rename view:", error.message);
-  };
-  const deleteView = async (id) => {
-    setSavedViews((v) => v.filter((sv) => sv.id !== id));
-    if (activeViewId === id) setActiveViewId(null);
-    setConfirmDeleteView(null);
-    const { error } = await supabase.from("saved_views").delete().eq("id", id);
-    if (error) console.error("Failed to delete view:", error.message);
-  };
 
   const posts = useMemo(() => {
     if (!range) return [];
@@ -710,15 +609,6 @@ export default function Dashboard() {
 
   const pct = (a, b) => (b ? +(((a - b) / b) * 100).toFixed(1) : (a ? null : 0));
   const accVal = (key) => ({ now: agg(daily, key, "last"), prev: agg(prevDaily, key, "last") });
-
-  const filtered = useMemo(() => posts.filter((p) => {
-    if (topicFilter.length && !topicFilter.includes(p.catId)) return false;
-    if (search) {
-      const q = search.toLowerCase();
-      if (!p.caption.toLowerCase().includes(q) && !p.hashtags.join(" ").toLowerCase().includes(q) && !p.topic.toLowerCase().includes(q)) return false;
-    }
-    return true;
-  }), [posts, topicFilter, search]);
 
   const postsOnly = useMemo(() => posts.filter((p) => p.contentType === "Post"), [posts]);
   const reelsOnly = useMemo(() => posts.filter((p) => p.contentType === "Reel"), [posts]);
@@ -787,16 +677,7 @@ export default function Dashboard() {
     }).filter((r) => r.reelCount || r.postCount);
   }, [posts, categories]);
 
-  const sortedFiltered = useMemo(() => {
-    const dimTypes = { topic: "string", hashtags: "string", date: "string", caption: "string", contentType: "string" };
-    return sortRows(filtered, explorerSort, dimTypes);
-  }, [filtered, explorerSort]);
-  const visibleIds = useMemo(() => sortedFiltered.map((p) => p.id), [sortedFiltered]);
-  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
-  const toggleSelectAllVisible = () => setSelectedIds(allVisibleSelected ? [] : visibleIds);
-  const toggleSelectRow = (id) => setSelectedIds((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
-
-  const topContent = useMemo(() => [...filtered].sort((a, b) => b.engagement - a.engagement).slice(0, 8), [filtered]);
+  const topContent = useMemo(() => [...posts].sort((a, b) => b.engagement - a.engagement).slice(0, 8), [posts]);
   const presets = [["7d", "Last week"], ["30d", "Last month"], ["3m", "Last 3 months"], ["all", "All time"]];
 
   const followerNow = accVal("followers"), followingNow = accVal("following");
@@ -890,7 +771,7 @@ export default function Dashboard() {
           {lastSynced && <div style={{ color: T.muted, fontSize: 10.5, marginTop: 3 }}>Data last synced {fmtDateTime(lastSynced)}</div>}
         </div>
         <div style={{ display: "flex", gap: 3, background: T.surface, border: `1px solid ${T.line}`, padding: 3, ...facet(6) }}>
-          {[["overview", "Overview"], ["content", "Content"], ["explore", "Content Explorer"]].map(([k, l]) => (
+          {[["overview", "Overview"], ["content", "Content"]].map(([k, l]) => (
             <button key={k} onClick={() => setTab(k)} style={{ border: "none", cursor: "pointer", padding: "7px 15px", fontSize: 12, fontWeight: 600, background: tab === k ? T.gold : "transparent", color: tab === k ? T.bg : T.muted }}>{l}</button>
           ))}
         </div>
@@ -1188,142 +1069,6 @@ export default function Dashboard() {
         </>
       )}
 
-      {tab === "explore" && (
-        <>
-          <SectionHeader eyebrow="Self serve" title="Content Explorer" note="Search, filter, and configure exactly which columns you want to see." />
-
-          <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "14px 16px", marginBottom: 14, ...facet(9) }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, background: T.surface2, border: `1px solid ${T.line}`, padding: "7px 11px" }}>
-              <Search size={13} color={T.gold} />
-              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search captions, hashtags, topics…" style={{ background: "transparent", border: "none", outline: "none", color: T.ivory, fontSize: 12, fontFamily: "inherit", flex: 1 }} />
-              {search && <X size={13} color={T.muted} style={{ cursor: "pointer" }} onClick={() => setSearch("")} />}
-            </div>
-            <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
-              {categories.map((c) => <Chip key={c.id} active={topicFilter.includes(c.id)} onClick={() => setTopicFilter((s) => s.includes(c.id) ? s.filter((x) => x !== c.id) : [...s, c.id])}>{c.name}</Chip>)}
-            </div>
-          </div>
-
-          <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "14px 16px", marginBottom: 14, ...facet(9) }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 9, fontSize: 11.5, color: T.muted }}><Columns size={13} color={T.gold} /> Dimensions</div>
-            <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 10 }}>
-              {DIMENSION_FIELDS.map((d) => (
-                <Chip key={d.key} active={explorerDims.includes(d.key)} onClick={() => setExplorerDims((s) => s.includes(d.key) ? s.filter((x) => x !== d.key) : [...s, d.key])}>{d.label}</Chip>
-              ))}
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 9, fontSize: 11.5, color: T.muted }}><Sliders size={13} color={T.gold} /> Metrics</div>
-            <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
-              {METRICS.map((m) => (
-                <Chip key={m.key} active={explorerMetrics.includes(m.key)} infoText={m.description} onClick={() => setExplorerMetrics((s) => s.includes(m.key) ? s.filter((x) => x !== m.key) : [...s, m.key])}>
-                  {m.label}
-                </Chip>
-              ))}
-            </div>
-          </div>
-
-          <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "14px 16px", marginBottom: 14, ...facet(9) }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: viewsOpen ? 12 : 0 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, color: T.muted }}>
-                <FolderOpen size={13} color={T.gold} /> Saved views
-                {activeViewId && ` — viewing "${savedViews.find((v) => v.id === activeViewId)?.name}"`}
-                {!activeViewId && activeSuggestion && ` — viewing "${activeSuggestion}"`}
-              </div>
-              <button onClick={() => setViewsOpen((s) => !s)} style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.muted, padding: "5px 10px", fontSize: 11, cursor: "pointer", borderRadius: 3 }}>
-                {viewsOpen ? "Hide" : "Manage views"}
-              </button>
-            </div>
-
-            <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", marginTop: 10 }}>
-              <span style={{ fontSize: 10.5, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" }}>Quick views</span>
-              {SUGGESTED_VIEWS.map((sv) => (
-                <Chip key={sv.name} active={activeSuggestion === sv.name} onClick={() => loadSuggestion(sv)}>{sv.name}</Chip>
-              ))}
-            </div>
-
-            {viewsOpen && (
-              <>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
-                  {savedViews.length === 0 && <div style={{ fontSize: 11.5, color: T.muted }}>No saved views yet — configure the filters and columns above, then save the current setup.</div>}
-                  {savedViews.map((v) => (
-                    <div key={v.id} style={{ display: "flex", alignItems: "center", gap: 8, background: v.id === activeViewId ? "rgba(203,163,92,0.08)" : "transparent", padding: "4px 6px", borderRadius: 3 }}>
-                      {editingView === v.id ? (
-                        <>
-                          <input autoFocus defaultValue={v.name} onKeyDown={(e) => { if (e.key === "Enter") { renameView(v.id, e.target.value); setEditingView(null); } }} style={{ flex: 1, background: T.surface2, border: `1px solid ${T.gold}`, color: T.ivory, padding: "4px 7px", fontSize: 12, fontFamily: "inherit" }} />
-                          <button onClick={(e) => { const input = e.target.parentElement.querySelector("input"); renameView(v.id, input.value); setEditingView(null); }} style={{ background: "transparent", border: "none", cursor: "pointer", color: T.sage }}><Check size={14} /></button>
-                        </>
-                      ) : confirmDeleteView === v.id ? (
-                        <>
-                          <span style={{ flex: 1, fontSize: 12, color: T.clay }}>Delete "{v.name}"? This can't be undone.</span>
-                          <button onClick={() => deleteView(v.id)} style={{ background: T.clay, border: "none", color: T.bg, padding: "4px 10px", fontSize: 11.5, fontWeight: 600, cursor: "pointer", borderRadius: 3 }}>Delete</button>
-                          <button onClick={() => setConfirmDeleteView(null)} style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.muted, padding: "4px 10px", fontSize: 11.5, cursor: "pointer", borderRadius: 3 }}>Cancel</button>
-                        </>
-                      ) : (
-                        <>
-                          <button onClick={() => loadView(v)} style={{ flex: 1, textAlign: "left", background: "transparent", border: "none", color: v.id === activeViewId ? T.gold : T.ivory, fontSize: 12.5, cursor: "pointer", padding: "3px 0" }}>{v.name}</button>
-                          <button onClick={() => updateView(v.id)} title="Update this view with the current setup" style={{ background: "transparent", border: "none", cursor: "pointer", color: T.muted }}><RotateCcw size={13} /></button>
-                          <button onClick={() => setEditingView(v.id)} style={{ background: "transparent", border: "none", cursor: "pointer", color: T.muted }}><Pencil size={13} /></button>
-                          <button onClick={() => setConfirmDeleteView(v.id)} style={{ background: "transparent", border: "none", cursor: "pointer", color: T.clay }}><Trash2 size={13} /></button>
-                        </>
-                      )}
-                    </div>
-                  ))}
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <input value={newViewName} onChange={(e) => setNewViewName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") createView(newViewName); }} placeholder="Name this view (e.g. 'Reels this month')…" style={{ flex: 1, background: T.surface2, border: `1px solid ${T.line}`, color: T.ivory, padding: "6px 9px", fontSize: 12, fontFamily: "inherit" }} />
-                  <button onClick={() => createView(newViewName)} style={{ display: "flex", alignItems: "center", gap: 5, background: T.gold, border: "none", color: T.bg, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}><Save size={13} /> Save current view</button>
-                </div>
-              </>
-            )}
-          </div>
-
-          {selectedIds.length > 0 && (
-            <div style={{ display: "flex", alignItems: "center", gap: 10, background: "rgba(203,163,92,0.1)", border: `1px solid ${T.gold}`, padding: "9px 14px", marginBottom: 10, ...facet(7) }}>
-              <span style={{ fontSize: 12, color: T.ivory, fontWeight: 600 }}>{selectedIds.length} selected</span>
-              <select value={bulkCatId} onChange={(e) => setBulkCatId(e.target.value)} style={{ fontSize: 11.5, padding: "5px 8px", background: T.surface2, color: T.ivory, border: `1px solid ${T.line}`, borderRadius: 3 }}>
-                <option value="">Move to…</option>
-                {categories.map((c) => <option key={c.id} value={c.id} style={{ background: T.surface, color: T.ivory }}>{c.name}</option>)}
-              </select>
-              <button onClick={() => bulkReassign(selectedIds, bulkCatId)} disabled={!bulkCatId} style={{ background: bulkCatId ? T.gold : T.line, border: "none", color: T.bg, padding: "5px 12px", fontSize: 11.5, fontWeight: 600, cursor: bulkCatId ? "pointer" : "not-allowed", borderRadius: 3 }}>Apply</button>
-              <button onClick={() => setSelectedIds([])} style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.muted, padding: "5px 10px", fontSize: 11.5, cursor: "pointer", borderRadius: 3 }}>Clear</button>
-            </div>
-          )}
-
-          <div style={{ background: T.surface, border: `1px solid ${T.line}`, overflowX: "auto", ...facet(10) }}>
-            <table style={{ fontSize: 11.5 }}>
-              <thead><tr style={{ borderBottom: `1px solid ${T.line}`, color: T.muted, fontSize: 10, textTransform: "uppercase" }}>
-                <th style={{ padding: "10px 12px" }}><input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAllVisible} style={{ cursor: "pointer" }} /></th>
-                <Th label="Type" sortKey="contentType" sort={explorerSort} setSort={setExplorerSort} />
-                {explorerDims.map((dk) => <Th key={dk} label={DIMENSION_FIELDS.find((d) => d.key === dk)?.label} sortKey={dk} sort={explorerSort} setSort={setExplorerSort} />)}
-                <Th label="Caption" sortKey="caption" sort={explorerSort} setSort={setExplorerSort} />
-                {explorerMetrics.map((mk) => { const m = METRICS.find((x) => x.key === mk); return <Th key={mk} label={m.label} sortKey={mk} sort={explorerSort} setSort={setExplorerSort} align="right" />; })}
-              </tr></thead>
-              <tbody>{sortedFiltered.map((p) => (
-                <tr key={p.id} style={{ borderBottom: `1px solid ${T.line}`, background: selectedIds.includes(p.id) ? "rgba(203,163,92,0.06)" : "transparent" }}>
-                  <td style={{ padding: "8px 12px" }}><input type="checkbox" checked={selectedIds.includes(p.id)} onChange={() => toggleSelectRow(p.id)} style={{ cursor: "pointer" }} /></td>
-                  <td style={{ padding: "8px 12px", color: T.muted, whiteSpace: "nowrap" }}><span style={{ display: "flex", alignItems: "center", gap: 4 }}><TypeIcon type={p.contentType} size={10} />{p.contentType}</span></td>
-                  {explorerDims.map((dk) => (
-                    <td key={dk} style={{ padding: "8px 12px", color: T.muted, whiteSpace: "nowrap" }}>
-                      {dk === "topic" && <span style={{ fontSize: 10.5, padding: "2px 7px", borderRadius: 3, background: `${p.topicColor}22`, color: p.topicColor }}>{p.topic}</span>}
-                      {dk === "hashtags" && <span style={{ fontSize: 10.5 }}>{p.hashtags.join(" ") || "—"}</span>}
-                      {dk === "date" && fmtDate(p.date)}
-                    </td>
-                  ))}
-                  <td style={{ padding: "8px 12px", color: T.ivory, maxWidth: 280 }}>
-                    <span style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
-                      <span>{p.caption}</span>
-                      {p.permalink && (
-                        <a href={p.permalink} target="_blank" rel="noopener noreferrer" title="View on Instagram" style={{ color: T.muted, flexShrink: 0, marginTop: 1 }}>
-                          <ExternalLink size={11} />
-                        </a>
-                      )}
-                    </span>
-                  </td>
-                  {explorerMetrics.map((mk) => <td key={mk} style={{ padding: "8px 12px", textAlign: "right" }}>{fmt(p[mk])}</td>)}
-                </tr>))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
     </div>
     </TooltipProvider>
     </DescProvider>
