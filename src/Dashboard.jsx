@@ -83,7 +83,6 @@ const SUGGESTED_VIEWS = [
 // single source of truth for id -> human label across both tabs.
 const VISUAL_REGISTRY = [
   { id: "follower-history", tab: "Overview", label: "Follower count history" },
-  { id: "new-followers-content", tab: "Overview", label: "New followers from content" },
   { id: "best-day-of-week", tab: "Overview", label: "Best day to post" },
   { id: "bio-link-funnel-trend", tab: "Overview", label: "Profile funnel trend" },
   { id: "posting-streak", tab: "Overview", label: "Posting consistency" },
@@ -1027,12 +1026,6 @@ export default function Dashboard() {
               </div>
             </>
           )}
-
-          <Section id="new-followers-content" eyebrow="Profile funnel" title="New followers from content" insight="Posts only — Reels don't support follower attribution. Sum of new followers Meta attributes directly to a specific post, within the selected range." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
-              <KpiCard icon={TrendingUp} label="New followers (Posts)" value={fmt(agg(postsOnly, "newFollowers", "sum"))} description="New followers attributed to Posts specifically in the selected range." />
-            </div>
-          </Section>
 
           <Section id="bio-link-funnel-trend" eyebrow="Profile funnel" title="Profile funnel trend" insight="Posts' profile visits and profile actions, bucketed by week — shows whether profile-visit-driving content is increasing or fading, not just the range total." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
             <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 6px", ...facet(10) }}>
