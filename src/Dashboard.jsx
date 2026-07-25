@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar,
-  XAxis, YAxis, CartesianGrid, Tooltip, Cell,
+  XAxis, YAxis, CartesianGrid, Tooltip,
   ScatterChart, Scatter, ZAxis, Legend,
 } from "recharts";
 import {
@@ -57,6 +57,7 @@ const COUNTRY_NAMES = {
   DE: "Germany", FR: "France", NO: "Norway", NL: "Netherlands", SE: "Sweden",
   BR: "Brazil", MX: "Mexico", ES: "Spain", IT: "Italy", AE: "UAE", SG: "Singapore",
   PK: "Pakistan", BD: "Bangladesh", PH: "Philippines", ID: "Indonesia", NG: "Nigeria",
+  ZA: "South Africa", RO: "Romania",
 };
 const DIMENSION_FIELDS = [
   { key: "topic", label: "Topic" },
@@ -82,15 +83,10 @@ const SUGGESTED_VIEWS = [
 // single source of truth for id -> human label across both tabs.
 const VISUAL_REGISTRY = [
   { id: "follower-history", tab: "Overview", label: "Follower count history" },
-  { id: "net-follower-bars", tab: "Overview", label: "Net follower change" },
-  { id: "views-trend", tab: "Overview", label: "Views over time" },
-  { id: "engagement-rate", tab: "Overview", label: "Engagement rate" },
   { id: "new-followers-content", tab: "Overview", label: "New followers from content" },
   { id: "profile-funnel", tab: "Overview", label: "Profile funnel" },
   { id: "best-day-of-week", tab: "Overview", label: "Best day to post" },
   { id: "content-mix-trend", tab: "Overview", label: "Content mix over time" },
-  { id: "rewatch-index", tab: "Overview", label: "Rewatch index" },
-  { id: "audience-drift", tab: "Overview", label: "Audience composition over time" },
   { id: "bio-link-funnel-trend", tab: "Overview", label: "Profile funnel trend" },
   { id: "posting-streak", tab: "Overview", label: "Posting consistency" },
   { id: "skip-rate-leaderboard", tab: "Content", label: "Skip rate leaderboard" },
@@ -185,12 +181,6 @@ function mapDailyRow(row) {
     date: row.metric_date,
     followers: row.followers,
     following: row.following,
-    netFollowerChange: row.net_follower_change,
-    accountReach: row.account_reach,
-    reachReels: row.reach_reels,
-    reachPosts: row.reach_posts,
-    viewsReels: row.views_reels,
-    viewsPosts: row.views_posts,
   };
 }
 
@@ -421,7 +411,6 @@ export default function Dashboard() {
   const [categories, setCategories] = useState([]);
   const [savedViews, setSavedViews] = useState([]);
   const [audienceSnapshot, setAudienceSnapshot] = useState(null);
-  const [audienceHistory, setAudienceHistory] = useState([]);
 
   const [range, setRange] = useState(null);
   const [preset, setPreset] = useState(() => readUrlParams().get("range") || "all");
@@ -520,7 +509,6 @@ export default function Dashboard() {
         .limit(90);
       if (error) { console.warn("audience_snapshots unavailable:", error.message); return; }
       setAudienceSnapshot(data?.[0] ?? null);
-      setAudienceHistory((data ?? []).slice().reverse());
     })();
   }, []);
 
@@ -806,9 +794,6 @@ export default function Dashboard() {
   const presets = [["7d", "Last week"], ["30d", "Last month"], ["3m", "Last 3 months"], ["all", "All time"]];
 
   const followerNow = accVal("followers"), followingNow = accVal("following");
-  const hasAccountReach = useMemo(() => daily.some((d) => d.accountReach !== null && d.accountReach !== undefined), [daily]);
-  const hasDedupReachByType = useMemo(() => daily.some((d) => d.reachReels != null || d.reachPosts != null), [daily]);
-  const hasViewsByType = useMemo(() => daily.some((d) => d.viewsReels != null || d.viewsPosts != null), [daily]);
 
   const ageGenderChartData = useMemo(() => {
     const rows = audienceSnapshot?.age_gender ?? [];
@@ -831,17 +816,6 @@ export default function Dashboard() {
       .sort((a, b) => b[1] - a[1])
       .slice(0, 8);
   }, [audienceSnapshot]);
-
-  // Item 3: engagement rate — normalizes interactions against reach instead
-  // of comparing raw sums across periods with different posting volume.
-  const engagementRate = useMemo(() => {
-    const r = agg(posts, "reach", "sum");
-    return r ? +((agg(posts, "engagement", "sum") / r) * 100).toFixed(2) : null;
-  }, [posts]);
-  const prevEngagementRate = useMemo(() => {
-    const r = agg(prevPosts, "reach", "sum");
-    return r ? +((agg(prevPosts, "engagement", "sum") / r) * 100).toFixed(2) : null;
-  }, [prevPosts]);
 
   // Item 5: profile funnel (Posts only — Reels don't support these metrics).
   const funnelStages = useMemo(() => {
@@ -879,33 +853,6 @@ export default function Dashboard() {
     });
     return Object.values(byWeek).sort((a, b) => a.week.localeCompare(b.week));
   }, [posts]);
-
-  // Item 15: rewatch index — views per reached account, Reels only. Above 1
-  // means the average reached viewer watched more than once.
-  const rewatchIndex = useMemo(() => {
-    const reach = agg(reelsOnly, "reach", "sum");
-    return reach ? +(agg(reelsOnly, "plays", "sum") / reach).toFixed(2) : null;
-  }, [reelsOnly]);
-  const prevRewatchIndex = useMemo(() => {
-    const prevReels = prevPosts.filter((p) => p.contentType === "Reel");
-    const reach = agg(prevReels, "reach", "sum");
-    return reach ? +(agg(prevReels, "plays", "sum") / reach).toFixed(2) : null;
-  }, [prevPosts]);
-
-  // Item 19: audience composition drift — gender split per snapshot day,
-  // summed across all age buckets (age x gender x day would be too many
-  // series to read at once).
-  const genderDriftData = useMemo(() => {
-    return audienceHistory.map((snap) => {
-      const rows = snap.age_gender ?? [];
-      const totals = { F: 0, M: 0, U: 0 };
-      rows.forEach((r) => {
-        const gender = r.dimension_values?.[1];
-        if (gender in totals) totals[gender] += r.value;
-      });
-      return { date: snap.snapshot_date, ...totals };
-    });
-  }, [audienceHistory]);
 
   // Item 21: profile funnel trend — Posts' profile_visits/profile_activity
   // summed per week, so you can see if profile-visit-driving content is
@@ -1051,108 +998,32 @@ export default function Dashboard() {
             <KpiCard icon={Users} label="Following" value={fmt(followingNow.now)} />
           </div>
 
-          <SubBlock id="follower-history" label="Follower count history" insight="Cumulative followers over time, from daily snapshots." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
-            <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 6px", ...facet(10) }}>
-              {daily.length < 2 ? (
-                <div style={{ height: 200, display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: 12, textAlign: "center", padding: "0 20px" }}>
-                  Not enough history yet — check back after a few more days of data.
-                </div>
-              ) : (
-                <ResponsiveContainer width="100%" height={200}>
-                  <AreaChart data={daily}>
-                    <defs><linearGradient id="fg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={T.gold} stopOpacity={0.35} /><stop offset="100%" stopColor={T.gold} stopOpacity={0} /></linearGradient></defs>
-                    <CartesianGrid stroke={T.line} vertical={false} />
-                    <XAxis dataKey="date" tickFormatter={(d) => fmtDate(d, { year: false })} tick={{ fontSize: 10, fill: T.muted }} axisLine={{ stroke: T.line }} tickLine={false} minTickGap={40} />
-                    <YAxis tick={{ fontSize: 10, fill: T.muted }} axisLine={false} tickLine={false} width={44} domain={["dataMin - 20", "dataMax + 20"]} />
-                    <Tooltip content={<Tip />} />
-                    <Area type="monotone" dataKey="followers" name="Followers" stroke={T.gold} fill="url(#fg)" strokeWidth={2} />
-                  </AreaChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-          </SubBlock>
-
           <div style={{ marginBottom: 10 }}>
-            <SubBlock id="net-follower-bars" label="Net follower change" insight="Daily gains/losses rather than the cumulative total above — makes it easier to spot which specific days drove growth or churn." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
+            <SubBlock id="follower-history" label="Follower count history" insight="Cumulative followers over time, from daily snapshots." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
               <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 6px", ...facet(10) }}>
                 {daily.length < 2 ? (
-                  <div style={{ height: 140, display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: 12 }}>Not enough history yet.</div>
+                  <div style={{ height: 200, display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: 12, textAlign: "center", padding: "0 20px" }}>
+                    Not enough history yet — check back after a few more days of data.
+                  </div>
                 ) : (
-                  <ResponsiveContainer width="100%" height={140}>
-                    <BarChart data={daily}>
+                  <ResponsiveContainer width="100%" height={200}>
+                    <AreaChart data={daily}>
+                      <defs><linearGradient id="fg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={T.gold} stopOpacity={0.35} /><stop offset="100%" stopColor={T.gold} stopOpacity={0} /></linearGradient></defs>
                       <CartesianGrid stroke={T.line} vertical={false} />
                       <XAxis dataKey="date" tickFormatter={(d) => fmtDate(d, { year: false })} tick={{ fontSize: 10, fill: T.muted }} axisLine={{ stroke: T.line }} tickLine={false} minTickGap={40} />
-                      <YAxis tick={{ fontSize: 10, fill: T.muted }} axisLine={false} tickLine={false} width={36} />
+                      <YAxis tick={{ fontSize: 10, fill: T.muted }} axisLine={false} tickLine={false} width={44} domain={["dataMin - 20", "dataMax + 20"]} />
                       <Tooltip content={<Tip />} />
-                      <Bar dataKey="netFollowerChange" name="Net change" radius={2}>
-                        {daily.map((d, i) => <Cell key={i} fill={(d.netFollowerChange ?? 0) >= 0 ? T.sage : T.clay} />)}
-                      </Bar>
-                    </BarChart>
+                      <Area type="monotone" dataKey="followers" name="Followers" stroke={T.gold} fill="url(#fg)" strokeWidth={2} />
+                    </AreaChart>
                   </ResponsiveContainer>
                 )}
               </div>
             </SubBlock>
           </div>
 
-          <SectionHeader eyebrow="Reach" title="How far content traveled" note="De-duplicated at the account level. Still sums across days in the range, so multi-day overlap isn't removed. The Reels/Posts breakdown excludes Stories; the total does not — see each card's info icon." />
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 30 }}>
-            {hasAccountReach && (
-              <KpiCard icon={Users} label="Total distinct reach (all content, incl. Stories)" value={fmt(agg(daily, "accountReach", "sum"))} delta={pct(agg(daily, "accountReach", "sum"), agg(prevDaily, "accountReach", "sum"))} description="Meta's own de-duplicated daily reach across everything — Reels, Posts, and Stories combined — summed across the range. Unlike summing each post's own reach, this doesn't double-count anyone who saw more than one piece of content. Not directly comparable to 'Distinct reach — Reels/Posts' below: those exclude Stories, and de-duplicated numbers don't add up across categories (anyone who saw more than one content type is counted once per category, so the parts sum to more than this whole)." />
-            )}
-            {hasDedupReachByType && (
-              <>
-                <KpiCard icon={Video} label="Distinct reach — Reels" value={fmt(agg(daily, "reachReels", "sum"))} delta={pct(agg(daily, "reachReels", "sum"), agg(prevDaily, "reachReels", "sum"))} description="De-duplicated accounts reached by Reels specifically, summed across the range. Story is excluded from this breakdown." />
-                <KpiCard icon={ImageIcon} label="Distinct reach — Posts" value={fmt(agg(daily, "reachPosts", "sum"))} delta={pct(agg(daily, "reachPosts", "sum"), agg(prevDaily, "reachPosts", "sum"))} description="De-duplicated accounts reached by image/carousel Posts specifically, summed across the range. Story is excluded from this breakdown." />
-              </>
-            )}
-          </div>
-
-          {hasViewsByType && (
-            <>
-              <SectionHeader eyebrow="Reach" title="Content views" note="De-duplicated at the account level, by content type. Story is excluded." />
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 30 }}>
-                <KpiCard icon={Video} label="Views — Reels" value={fmt(agg(daily, "viewsReels", "sum"))} delta={pct(agg(daily, "viewsReels", "sum"), agg(prevDaily, "viewsReels", "sum"))} description="Total times Reels were played or displayed, account-wide, within the selected range." />
-                <KpiCard icon={ImageIcon} label="Views — Posts" value={fmt(agg(daily, "viewsPosts", "sum"))} delta={pct(agg(daily, "viewsPosts", "sum"), agg(prevDaily, "viewsPosts", "sum"))} description="Total times image/carousel Posts were played or displayed, account-wide, within the selected range." />
-              </div>
-            </>
-          )}
-
-          <Section id="views-trend" eyebrow="Reach" title="Views over time" insight="Day-by-day trend behind the Views — Reels/Posts totals above — shows whether viewership is climbing or fading, not just the range sum." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
-            <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 6px", ...facet(10) }}>
-              {daily.length < 2 ? (
-                <div style={{ height: 160, display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: 12 }}>Not enough history yet.</div>
-              ) : (
-                <ResponsiveContainer width="100%" height={180}>
-                  <AreaChart data={daily}>
-                    <defs>
-                      <linearGradient id="vr" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={T.gold} stopOpacity={0.3} /><stop offset="100%" stopColor={T.gold} stopOpacity={0} /></linearGradient>
-                      <linearGradient id="vp" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={T.sage} stopOpacity={0.3} /><stop offset="100%" stopColor={T.sage} stopOpacity={0} /></linearGradient>
-                    </defs>
-                    <CartesianGrid stroke={T.line} vertical={false} />
-                    <XAxis dataKey="date" tickFormatter={(d) => fmtDate(d, { year: false })} tick={{ fontSize: 10, fill: T.muted }} axisLine={{ stroke: T.line }} tickLine={false} minTickGap={40} />
-                    <YAxis tick={{ fontSize: 10, fill: T.muted }} axisLine={false} tickLine={false} width={44} />
-                    <Tooltip content={<Tip />} />
-                    <Legend wrapperStyle={{ fontSize: 10.5, color: T.muted }} />
-                    <Area type="monotone" dataKey="viewsReels" name="Views — Reels" stroke={T.gold} fill="url(#vr)" strokeWidth={2} />
-                    <Area type="monotone" dataKey="viewsPosts" name="Views — Posts" stroke={T.sage} fill="url(#vp)" strokeWidth={2} />
-                  </AreaChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-          </Section>
-
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 30 }}>
-            <Section id="engagement-rate" eyebrow="Engagement" title="Engagement rate" insight="Interactions as a % of reach — normalizes engagement so periods with different posting volume are comparable, unlike raw interaction totals." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
-              <KpiCard icon={TrendingUp} label="Engagement rate" value={engagementRate !== null ? `${engagementRate}%` : "—"} delta={pct(engagementRate, prevEngagementRate)} description="Total interactions ÷ reach, as a percentage, for content in the selected range." />
-            </Section>
-            <Section id="rewatch-index" eyebrow="Engagement" title="Rewatch index" insight="Plays ÷ reach for Reels. Above 1 means the average reached viewer watched more than once — a stickiness signal distinct from raw view count." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
-              <KpiCard icon={Eye} label="Rewatch index (Reels)" value={rewatchIndex ?? "—"} delta={pct(rewatchIndex, prevRewatchIndex)} description="Plays divided by reach for Reels in the selected range. 1.0 means everyone who saw it watched exactly once on average; higher means rewatching." />
-            </Section>
-          </div>
-
           {audienceSnapshot && (
             <>
-              <SectionHeader eyebrow="Audience" title="Who's following" note={`Snapshot from ${fmtDate(audienceSnapshot.snapshot_date)}. Requires 100+ followers to populate.`} />
+              <SectionHeader eyebrow="Audience" title="Who's following" />
               <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 12, marginBottom: 30 }}>
                 <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 6px", ...facet(10) }}>
                   <div style={{ fontSize: 10.5, color: T.muted, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>Age &amp; gender</div>
@@ -1183,27 +1054,6 @@ export default function Dashboard() {
               </div>
             </>
           )}
-
-          <Section id="audience-drift" eyebrow="Audience" title="Audience composition over time" insight="Gender split of your followers by day, summed across all age groups. Shows whether your audience mix is shifting, not just today's snapshot. Needs a few weeks of accumulated daily snapshots to be useful." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
-            <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 6px", ...facet(10) }}>
-              {genderDriftData.length < 2 ? (
-                <div style={{ height: 160, display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: 12, textAlign: "center", padding: "0 20px" }}>Not enough snapshot history yet — check back after a few more days.</div>
-              ) : (
-                <ResponsiveContainer width="100%" height={180}>
-                  <AreaChart data={genderDriftData}>
-                    <CartesianGrid stroke={T.line} vertical={false} />
-                    <XAxis dataKey="date" tickFormatter={(d) => fmtDate(d, { year: false })} tick={{ fontSize: 10, fill: T.muted }} axisLine={{ stroke: T.line }} tickLine={false} minTickGap={40} />
-                    <YAxis tick={{ fontSize: 10, fill: T.muted }} axisLine={false} tickLine={false} width={36} />
-                    <Tooltip content={<Tip />} />
-                    <Legend wrapperStyle={{ fontSize: 10.5, color: T.muted }} />
-                    <Area type="monotone" stackId="g" dataKey="F" name="Female" stroke={T.gold} fill={T.gold} fillOpacity={0.5} />
-                    <Area type="monotone" stackId="g" dataKey="M" name="Male" stroke={T.sage} fill={T.sage} fillOpacity={0.5} />
-                    <Area type="monotone" stackId="g" dataKey="U" name="Unspecified" stroke={T.muted} fill={T.muted} fillOpacity={0.5} />
-                  </AreaChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-          </Section>
 
           <Section id="new-followers-content" eyebrow="Profile funnel" title="New followers from content" insight="Posts only — Reels don't support follower attribution. Sum of new followers Meta attributes directly to a specific post, within the selected range." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
