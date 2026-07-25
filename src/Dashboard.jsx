@@ -743,7 +743,7 @@ export default function Dashboard() {
   // Item 8: skip-rate leaderboard (Reels only).
   const skipRateRanked = useMemo(() => {
     const withRate = reelsOnly.filter((p) => p.reelsSkipRate !== null && p.reelsSkipRate !== undefined);
-    return withRate.slice().sort((a, b) => a.reelsSkipRate - b.reelsSkipRate);
+    return withRate.slice().sort((a, b) => a.reelsSkipRate - b.reelsSkipRate).slice(0, 10);
   }, [reelsOnly]);
 
   // Item 11: hashtag performance — explode hashtags, average engagement per tag.
