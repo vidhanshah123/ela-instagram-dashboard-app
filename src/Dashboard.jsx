@@ -44,7 +44,6 @@ const METRICS = [
 // ISO 3166-1 alpha-2 -> display name, for the audience_snapshots country breakdown.
 // Not exhaustive — falls back to the raw code for anything not listed here.
 const WEEKDAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const MILESTONE_STEPS = [100, 250, 500, 1000, 2500, 5000, 10000, 25000, 50000, 100000, 250000, 500000, 1000000];
 // Monday-start week bucket key for a "YYYY-MM-DD" date string, computed via
 // getUTCDay() (not getDay()) so it's timezone-safe like fmtDate.
 function weekStartOf(dateStr) {
@@ -82,6 +81,7 @@ const SUGGESTED_VIEWS = [
 // Every hideable visual, for the "Manage hidden" restore panel — the
 // single source of truth for id -> human label across both tabs.
 const VISUAL_REGISTRY = [
+  { id: "follower-history", tab: "Overview", label: "Follower count history" },
   { id: "net-follower-bars", tab: "Overview", label: "Net follower change" },
   { id: "views-trend", tab: "Overview", label: "Views over time" },
   { id: "engagement-rate", tab: "Overview", label: "Engagement rate" },
@@ -93,7 +93,6 @@ const VISUAL_REGISTRY = [
   { id: "audience-drift", tab: "Overview", label: "Audience composition over time" },
   { id: "bio-link-funnel-trend", tab: "Overview", label: "Profile funnel trend" },
   { id: "posting-streak", tab: "Overview", label: "Posting consistency" },
-  { id: "follower-milestone", tab: "Overview", label: "Follower milestone" },
   { id: "skip-rate-leaderboard", tab: "Content", label: "Skip rate leaderboard" },
   { id: "top-posts-new-followers", tab: "Content", label: "Top posts by new followers" },
   { id: "watch-time-efficiency", tab: "Content", label: "Watch-time efficiency" },
@@ -280,9 +279,61 @@ function HideControl({ id, confirmHideId, onRequestHide, onConfirmHide, onCancel
     </button>
   );
 }
+// Lets every visual's description be self-edited in place rather than
+// hard-coded — DescCtx holds the saved overrides plus which id (if any)
+// is mid-edit, so any EditableInsight anywhere in the tree can read/write
+// without prop-drilling through Section/SubBlock call sites.
+const DescCtx = createContext(null);
+function DescProvider({ customDescriptions, onSave, children }) {
+  const [editingId, setEditingId] = useState(null);
+  const [draft, setDraft] = useState("");
+  const startEdit = (id, current) => { setEditingId(id); setDraft(current ?? ""); };
+  const cancel = () => { setEditingId(null); setDraft(""); };
+  const save = (id) => { onSave(id, draft.trim()); setEditingId(null); };
+  return (
+    <DescCtx.Provider value={{ customDescriptions, editingId, draft, setDraft, startEdit, cancel, save }}>
+      {children}
+    </DescCtx.Provider>
+  );
+}
+// Renders a visual's description as plain text with an edit pencil next
+// to it; clicking swaps it for a textarea + Save/Cancel. `fallback` is the
+// built-in copy, shown until the user saves their own override.
+function EditableInsight({ id, fallback }) {
+  const ctx = useContext(DescCtx);
+  if (!ctx) return fallback ? <div style={{ fontSize: 11.5, color: T.muted, maxWidth: 340, textAlign: "right" }}>{fallback}</div> : null;
+  const { customDescriptions, editingId, draft, setDraft, startEdit, cancel, save } = ctx;
+  const text = customDescriptions[id] ?? fallback ?? "";
+  if (editingId === id) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, width: 280 }}>
+        <textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          rows={3}
+          autoFocus
+          placeholder="Describe this visual…"
+          style={{ width: "100%", background: T.surface2, border: `1px solid ${T.gold}`, color: T.ivory, fontSize: 11.5, fontFamily: "inherit", padding: "6px 8px", resize: "vertical", borderRadius: 3 }}
+        />
+        <div style={{ display: "flex", gap: 6 }}>
+          <button onClick={() => save(id)} style={{ background: T.gold, border: "none", color: T.bg, padding: "3px 10px", fontSize: 10.5, fontWeight: 600, cursor: "pointer", borderRadius: 3 }}>Save</button>
+          <button onClick={cancel} style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.muted, padding: "3px 10px", fontSize: 10.5, cursor: "pointer", borderRadius: 3 }}>Cancel</button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <span style={{ display: "inline-flex", alignItems: "flex-end", gap: 6, maxWidth: 340 }}>
+      {text && <span style={{ fontSize: 11.5, color: T.muted, textAlign: "right" }}>{text}</span>}
+      <button onClick={() => startEdit(id, text)} title="Edit description" style={{ background: "transparent", border: "none", cursor: "pointer", color: T.muted, display: "flex", alignItems: "center", padding: 2, flexShrink: 0 }}>
+        <Pencil size={11} />
+      </button>
+    </span>
+  );
+}
 // Every new/optional visual is wrapped in this so it can be explained
-// (via `insight`, rendered as the header's note) and hidden/restored
-// without touching the section's own layout code.
+// (self-editable via EditableInsight) and hidden/restored without
+// touching the section's own layout code.
 function Section({ id, eyebrow, title, insight, hiddenVisuals, confirmHideId, onRequestHide, onConfirmHide, onCancelHide, children }) {
   if (hiddenVisuals.includes(id)) return null;
   return (
@@ -290,9 +341,28 @@ function Section({ id, eyebrow, title, insight, hiddenVisuals, confirmHideId, on
       <SectionHeader
         eyebrow={eyebrow}
         title={title}
-        note={insight}
+        note={<EditableInsight id={id} fallback={insight} />}
         right={<HideControl id={id} confirmHideId={confirmHideId} onRequestHide={onRequestHide} onConfirmHide={onConfirmHide} onCancelHide={onCancelHide} label="this section" />}
       />
+      {children}
+    </div>
+  );
+}
+// Lighter-weight than Section: a small inline label instead of a full
+// SectionHeader, for visuals nested under a shared parent title (e.g. the
+// follower history/net-change charts living under "Follower activity").
+// Still hideable and its description still self-editable.
+function SubBlock({ id, label, insight, hiddenVisuals, confirmHideId, onRequestHide, onConfirmHide, onCancelHide, children }) {
+  if (hiddenVisuals.includes(id)) return null;
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 8, gap: 12, flexWrap: "wrap" }}>
+        <div style={{ fontSize: 11.5, fontWeight: 600, color: T.ivory }}>{label}</div>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 10 }}>
+          <EditableInsight id={id} fallback={insight} />
+          <HideControl id={id} confirmHideId={confirmHideId} onRequestHide={onRequestHide} onConfirmHide={onConfirmHide} onCancelHide={onCancelHide} label="this chart" />
+        </div>
+      </div>
       {children}
     </div>
   );
@@ -381,6 +451,7 @@ export default function Dashboard() {
   const [hiddenVisuals, setHiddenVisuals] = useState([]);
   const [confirmHideId, setConfirmHideId] = useState(null);
   const [manageHiddenOpen, setManageHiddenOpen] = useState(false);
+  const [customDescriptions, setCustomDescriptions] = useState({});
 
   useEffect(() => {
     (async () => {
@@ -474,6 +545,33 @@ export default function Dashboard() {
     setHiddenVisuals((v) => v.filter((x) => x !== id));
     const { error } = await supabase.from("hidden_visuals").delete().eq("visual_id", id);
     if (error) console.error("Failed to restore visual:", error.message);
+  };
+
+  // Isolated for the same reason — visual_descriptions is a newer table
+  // too, and lets each visual's built-in copy be overridden per-user.
+  useEffect(() => {
+    (async () => {
+      const { data, error } = await supabase.from("visual_descriptions").select("visual_id, description");
+      if (error) { console.warn("visual_descriptions unavailable:", error.message); return; }
+      const map = {};
+      (data ?? []).forEach((r) => { map[r.visual_id] = r.description; });
+      setCustomDescriptions(map);
+    })();
+  }, []);
+
+  const saveDescription = async (id, text) => {
+    setCustomDescriptions((m) => {
+      const next = { ...m };
+      if (text) next[id] = text; else delete next[id];
+      return next;
+    });
+    if (text) {
+      const { error } = await supabase.from("visual_descriptions").upsert({ visual_id: id, description: text });
+      if (error) console.error("Failed to save description:", error.message);
+    } else {
+      const { error } = await supabase.from("visual_descriptions").delete().eq("visual_id", id);
+      if (error) console.error("Failed to reset description:", error.message);
+    }
   };
 
   // Keep the URL in sync so filters/tab/view are shareable and survive a refresh.
@@ -591,7 +689,6 @@ export default function Dashboard() {
 
   const pct = (a, b) => (b ? +(((a - b) / b) * 100).toFixed(1) : (a ? null : 0));
   const accVal = (key) => ({ now: agg(daily, key, "last"), prev: agg(prevDaily, key, "last") });
-  const accSum = (key) => ({ now: agg(daily, key, "sum"), prev: agg(prevDaily, key, "sum") });
 
   const filtered = useMemo(() => posts.filter((p) => {
     if (topicFilter.length && !topicFilter.includes(p.catId)) return false;
@@ -709,7 +806,6 @@ export default function Dashboard() {
   const presets = [["7d", "Last week"], ["30d", "Last month"], ["3m", "Last 3 months"], ["all", "All time"]];
 
   const followerNow = accVal("followers"), followingNow = accVal("following");
-  const netChange = accSum("netFollowerChange");
   const hasAccountReach = useMemo(() => daily.some((d) => d.accountReach !== null && d.accountReach !== undefined), [daily]);
   const hasDedupReachByType = useMemo(() => daily.some((d) => d.reachReels != null || d.reachPosts != null), [daily]);
   const hasViewsByType = useMemo(() => daily.some((d) => d.viewsReels != null || d.viewsPosts != null), [daily]);
@@ -830,10 +926,12 @@ export default function Dashboard() {
   // recent. Deliberately uses ALL content, not the range-filtered `posts`,
   // same reasoning as "Data last synced" — it should reflect today's real
   // streak regardless of what date range happens to be selected.
+  // startDate is the earliest post date within the oldest week of the
+  // streak — the actual day the current unbroken run began.
   const postingStreak = useMemo(() => {
-    if (!content.length) return 0;
+    if (!content.length) return { count: 0, startDate: null };
     const weeks = [...new Set(content.map((p) => weekStartOf(p.date)))].sort().reverse();
-    if (!weeks.length) return 0;
+    if (!weeks.length) return { count: 0, startDate: null };
     let streak = 1;
     let cursor = new Date(weeks[0] + "T00:00:00Z");
     for (let i = 1; i < weeks.length; i++) {
@@ -841,17 +939,10 @@ export default function Dashboard() {
       if (weeks[i] === cursor.toISOString().slice(0, 10)) streak++;
       else break;
     }
-    return streak;
+    const startWeek = weeks[streak - 1];
+    const startDate = content.filter((p) => weekStartOf(p.date) === startWeek).map((p) => p.date).sort()[0];
+    return { count: streak, startDate };
   }, [content]);
-
-  // Item 25: follower milestone — next round number above the current count.
-  const followerMilestone = useMemo(() => {
-    const current = followerNow.now;
-    if (!current) return null;
-    let milestone = MILESTONE_STEPS.find((m) => m > current);
-    if (!milestone) milestone = Math.ceil(current / 1000000) * 1000000 + 1000000;
-    return { current, milestone, remaining: milestone - current, pct: (current / milestone) * 100 };
-  }, [followerNow.now]);
 
   if (loading) {
     return (
@@ -876,6 +967,7 @@ export default function Dashboard() {
   }
 
   return (
+    <DescProvider customDescriptions={customDescriptions} onSave={saveDescription}>
     <TooltipProvider>
     <div style={{ background: T.bg, minHeight: "100%", padding: "32px 26px 60px", fontFamily: "Inter, sans-serif", color: T.ivory }}>
       <style>{`
@@ -940,76 +1032,66 @@ export default function Dashboard() {
 
       {tab === "overview" && (
         <>
-          <SectionHeader eyebrow="Audience" title="Follower activity" />
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 30 }}>
-            <KpiCard icon={Users} label="Followers" value={fmt(followerNow.now)} delta={pct(followerNow.now, followerNow.prev)} description="Total current followers. Sourced from the account object (followers_count)." />
-            <KpiCard icon={Users} label="Following" value={fmt(followingNow.now)} description="Accounts this profile follows (follows_count)." />
-            <KpiCard icon={TrendingUp} label="Net follower change" value={fmt(netChange.now)} delta={pct(netChange.now, netChange.prev)} description="Graph API's follower_count insight only returns net daily change — gained and lost cannot be reported as separate figures." />
-          </div>
-
-          <SectionHeader eyebrow="Audience" title="Follower count history" />
-          <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 6px", marginBottom: 30, ...facet(10) }}>
-            {daily.length < 2 ? (
-              <div style={{ height: 200, display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: 12, textAlign: "center", padding: "0 20px" }}>
-                Not enough history yet — check back after a few more days of data.
-              </div>
-            ) : (
-              <ResponsiveContainer width="100%" height={200}>
-                <AreaChart data={daily}>
-                  <defs><linearGradient id="fg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={T.gold} stopOpacity={0.35} /><stop offset="100%" stopColor={T.gold} stopOpacity={0} /></linearGradient></defs>
-                  <CartesianGrid stroke={T.line} vertical={false} />
-                  <XAxis dataKey="date" tickFormatter={(d) => fmtDate(d, { year: false })} tick={{ fontSize: 10, fill: T.muted }} axisLine={{ stroke: T.line }} tickLine={false} minTickGap={40} />
-                  <YAxis tick={{ fontSize: 10, fill: T.muted }} axisLine={false} tickLine={false} width={44} domain={["dataMin - 20", "dataMax + 20"]} />
-                  <Tooltip content={<Tip />} />
-                  <Area type="monotone" dataKey="followers" name="Followers" stroke={T.gold} fill="url(#fg)" strokeWidth={2} />
-                </AreaChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-
-          <Section id="net-follower-bars" eyebrow="Audience" title="Net follower change" insight="Daily gains/losses rather than the cumulative total above — makes it easier to spot which specific days drove growth or churn." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
-            <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 6px", ...facet(10) }}>
-              {daily.length < 2 ? (
-                <div style={{ height: 140, display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: 12 }}>Not enough history yet.</div>
-              ) : (
-                <ResponsiveContainer width="100%" height={140}>
-                  <BarChart data={daily}>
-                    <CartesianGrid stroke={T.line} vertical={false} />
-                    <XAxis dataKey="date" tickFormatter={(d) => fmtDate(d, { year: false })} tick={{ fontSize: 10, fill: T.muted }} axisLine={{ stroke: T.line }} tickLine={false} minTickGap={40} />
-                    <YAxis tick={{ fontSize: 10, fill: T.muted }} axisLine={false} tickLine={false} width={36} />
-                    <Tooltip content={<Tip />} />
-                    <Bar dataKey="netFollowerChange" name="Net change" radius={2}>
-                      {daily.map((d, i) => <Cell key={i} fill={(d.netFollowerChange ?? 0) >= 0 ? T.sage : T.clay} />)}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-          </Section>
-
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12, marginBottom: 30 }}>
-            <Section id="follower-milestone" eyebrow="Audience" title="Next milestone" insight="How close the account is to its next round-number follower count." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
-              {followerMilestone ? (
-                <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 13px", ...facet(11) }}>
-                  <div style={{ fontFamily: "'Fraunces', serif", fontSize: 20, color: T.ivory, marginBottom: 8 }}>{fmt(followerMilestone.current)} <span style={{ color: T.muted, fontSize: 13 }}>/ {fmt(followerMilestone.milestone)}</span></div>
-                  <div style={{ height: 6, background: T.surface2, borderRadius: 3, overflow: "hidden", marginBottom: 8 }}>
-                    <div style={{ height: "100%", width: `${Math.min(100, followerMilestone.pct)}%`, background: T.gold }} />
-                  </div>
-                  <div style={{ fontSize: 11.5, color: T.muted }}>{fmt(followerMilestone.remaining)} followers to go</div>
-                </div>
-              ) : (
-                <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px", color: T.muted, fontSize: 12, ...facet(11) }}>No follower data yet.</div>
-              )}
-            </Section>
             <Section id="posting-streak" eyebrow="Audience" title="Posting consistency" insight="Consecutive weeks (not days — this account doesn't post daily) with at least one piece of content, counted back from the most recent post. Reflects all-time data, not the date range above." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
               <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 13px", ...facet(11) }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <Flame size={18} color={T.gold} />
-                  <div style={{ fontFamily: "'Fraunces', serif", fontSize: 23, color: T.ivory }}>{postingStreak}</div>
+                  <div style={{ fontFamily: "'Fraunces', serif", fontSize: 23, color: T.ivory }}>{postingStreak.count}</div>
                 </div>
-                <div style={{ fontSize: 11.5, color: T.muted, marginTop: 4 }}>consecutive week{postingStreak === 1 ? "" : "s"} with a post</div>
+                <div style={{ fontSize: 11.5, color: T.muted, marginTop: 4 }}>consecutive week{postingStreak.count === 1 ? "" : "s"} with a post</div>
+                {postingStreak.startDate && <div style={{ fontSize: 10.5, color: T.muted, marginTop: 2 }}>Since {fmtDate(postingStreak.startDate)}</div>}
               </div>
             </Section>
+          </div>
+
+          <SectionHeader eyebrow="Audience" title="Follower activity" />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 24 }}>
+            <KpiCard icon={Users} label="Followers" value={fmt(followerNow.now)} delta={pct(followerNow.now, followerNow.prev)} />
+            <KpiCard icon={Users} label="Following" value={fmt(followingNow.now)} />
+          </div>
+
+          <SubBlock id="follower-history" label="Follower count history" insight="Cumulative followers over time, from daily snapshots." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
+            <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 6px", ...facet(10) }}>
+              {daily.length < 2 ? (
+                <div style={{ height: 200, display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: 12, textAlign: "center", padding: "0 20px" }}>
+                  Not enough history yet — check back after a few more days of data.
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height={200}>
+                  <AreaChart data={daily}>
+                    <defs><linearGradient id="fg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={T.gold} stopOpacity={0.35} /><stop offset="100%" stopColor={T.gold} stopOpacity={0} /></linearGradient></defs>
+                    <CartesianGrid stroke={T.line} vertical={false} />
+                    <XAxis dataKey="date" tickFormatter={(d) => fmtDate(d, { year: false })} tick={{ fontSize: 10, fill: T.muted }} axisLine={{ stroke: T.line }} tickLine={false} minTickGap={40} />
+                    <YAxis tick={{ fontSize: 10, fill: T.muted }} axisLine={false} tickLine={false} width={44} domain={["dataMin - 20", "dataMax + 20"]} />
+                    <Tooltip content={<Tip />} />
+                    <Area type="monotone" dataKey="followers" name="Followers" stroke={T.gold} fill="url(#fg)" strokeWidth={2} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </SubBlock>
+
+          <div style={{ marginBottom: 10 }}>
+            <SubBlock id="net-follower-bars" label="Net follower change" insight="Daily gains/losses rather than the cumulative total above — makes it easier to spot which specific days drove growth or churn." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
+              <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 6px", ...facet(10) }}>
+                {daily.length < 2 ? (
+                  <div style={{ height: 140, display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: 12 }}>Not enough history yet.</div>
+                ) : (
+                  <ResponsiveContainer width="100%" height={140}>
+                    <BarChart data={daily}>
+                      <CartesianGrid stroke={T.line} vertical={false} />
+                      <XAxis dataKey="date" tickFormatter={(d) => fmtDate(d, { year: false })} tick={{ fontSize: 10, fill: T.muted }} axisLine={{ stroke: T.line }} tickLine={false} minTickGap={40} />
+                      <YAxis tick={{ fontSize: 10, fill: T.muted }} axisLine={false} tickLine={false} width={36} />
+                      <Tooltip content={<Tip />} />
+                      <Bar dataKey="netFollowerChange" name="Net change" radius={2}>
+                        {daily.map((d, i) => <Cell key={i} fill={(d.netFollowerChange ?? 0) >= 0 ? T.sage : T.clay} />)}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+            </SubBlock>
           </div>
 
           <SectionHeader eyebrow="Reach" title="How far content traveled" note="De-duplicated at the account level. Still sums across days in the range, so multi-day overlap isn't removed. The Reels/Posts breakdown excludes Stories; the total does not — see each card's info icon." />
@@ -1643,5 +1725,6 @@ export default function Dashboard() {
       )}
     </div>
     </TooltipProvider>
+    </DescProvider>
   );
 }
