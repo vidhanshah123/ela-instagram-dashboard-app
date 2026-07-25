@@ -43,7 +43,6 @@ const METRICS = [
 ];
 // ISO 3166-1 alpha-2 -> display name, for the audience_snapshots country breakdown.
 // Not exhaustive — falls back to the raw code for anything not listed here.
-const WEEKDAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 // Monday-start week bucket key for a "YYYY-MM-DD" date string, computed via
 // getUTCDay() (not getDay()) so it's timezone-safe like fmtDate.
 function weekStartOf(dateStr) {
@@ -83,7 +82,6 @@ const SUGGESTED_VIEWS = [
 // single source of truth for id -> human label across both tabs.
 const VISUAL_REGISTRY = [
   { id: "follower-history", tab: "Overview", label: "Follower count history" },
-  { id: "best-day-of-week", tab: "Overview", label: "Best day to post" },
   { id: "posting-streak", tab: "Overview", label: "Posting consistency" },
   { id: "skip-rate-leaderboard", tab: "Content", label: "Skip rate leaderboard" },
   { id: "top-posts-new-followers", tab: "Content", label: "Top posts by new followers" },
@@ -813,18 +811,6 @@ export default function Dashboard() {
       .slice(0, 8);
   }, [audienceSnapshot]);
 
-  // Item 6: best day of week — bucket by weekday, average engagement per bucket.
-  const bestDayData = useMemo(() => {
-    const buckets = WEEKDAY_NAMES.map((day) => ({ day, total: 0, count: 0 }));
-    posts.forEach((p) => {
-      const wd = new Date(p.date + "T00:00:00Z").getUTCDay();
-      buckets[wd].total += p.engagement;
-      buckets[wd].count += 1;
-    });
-    return buckets.map((b) => ({ day: b.day, avgEngagement: b.count ? +(b.total / b.count).toFixed(1) : 0, count: b.count }));
-  }, [posts]);
-  const hasBestDayData = useMemo(() => bestDayData.some((b) => b.count > 0), [bestDayData]);
-
   // Item 24: posting streak — consecutive weeks (not days; this account
   // doesn't post daily) with at least one item, walking back from the most
   // recent. Deliberately uses ALL content, not the range-filtered `posts`,
@@ -925,14 +911,16 @@ export default function Dashboard() {
         </div>
       )}
 
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 26, background: T.surface, border: `1px solid ${T.line}`, padding: "11px 14px", ...facet(8) }}>
-        <Calendar size={13} color={T.gold} />
-        {presets.map(([k, l]) => <Chip key={k} active={preset === k} onClick={() => { setPreset(k); setRange(presetRange(k, MIN_DATE, MAX_DATE)); }}>{l}</Chip>)}
-        <div style={{ width: 1, height: 18, background: T.line, margin: "0 4px" }} />
-        <input type="date" value={range.start} min={MIN_DATE} max={range.end} onChange={(e) => { setPreset("custom"); setRange((r) => ({ ...r, start: e.target.value })); }} style={{ background: T.surface2, border: `1px solid ${T.line}`, color: T.ivory, padding: "5px 7px", fontSize: 11.5, fontFamily: "inherit" }} />
-        <span style={{ color: T.muted, fontSize: 11.5 }}>to</span>
-        <input type="date" value={range.end} min={range.start} max={MAX_DATE} onChange={(e) => { setPreset("custom"); setRange((r) => ({ ...r, end: e.target.value })); }} style={{ background: T.surface2, border: `1px solid ${T.line}`, color: T.ivory, padding: "5px 7px", fontSize: 11.5, fontFamily: "inherit" }} />
-      </div>
+      {tab !== "overview" && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 26, background: T.surface, border: `1px solid ${T.line}`, padding: "11px 14px", ...facet(8) }}>
+          <Calendar size={13} color={T.gold} />
+          {presets.map(([k, l]) => <Chip key={k} active={preset === k} onClick={() => { setPreset(k); setRange(presetRange(k, MIN_DATE, MAX_DATE)); }}>{l}</Chip>)}
+          <div style={{ width: 1, height: 18, background: T.line, margin: "0 4px" }} />
+          <input type="date" value={range.start} min={MIN_DATE} max={range.end} onChange={(e) => { setPreset("custom"); setRange((r) => ({ ...r, start: e.target.value })); }} style={{ background: T.surface2, border: `1px solid ${T.line}`, color: T.ivory, padding: "5px 7px", fontSize: 11.5, fontFamily: "inherit" }} />
+          <span style={{ color: T.muted, fontSize: 11.5 }}>to</span>
+          <input type="date" value={range.end} min={range.start} max={MAX_DATE} onChange={(e) => { setPreset("custom"); setRange((r) => ({ ...r, end: e.target.value })); }} style={{ background: T.surface2, border: `1px solid ${T.line}`, color: T.ivory, padding: "5px 7px", fontSize: 11.5, fontFamily: "inherit" }} />
+        </div>
+      )}
 
       {tab === "overview" && (
         <>
@@ -1011,24 +999,6 @@ export default function Dashboard() {
               </div>
             </>
           )}
-
-          <Section id="best-day-of-week" eyebrow="Content strategy" title="Best day to post" insight="Average engagement per weekday, across all posts/reels in the selected range. Higher bars = days that have historically performed better." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
-            <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 6px", ...facet(10) }}>
-              {!hasBestDayData ? (
-                <div style={{ height: 160, display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: 12 }}>No posts in range yet.</div>
-              ) : (
-                <ResponsiveContainer width="100%" height={180}>
-                  <BarChart data={bestDayData}>
-                    <CartesianGrid stroke={T.line} vertical={false} />
-                    <XAxis dataKey="day" tick={{ fontSize: 10, fill: T.muted }} axisLine={{ stroke: T.line }} tickLine={false} />
-                    <YAxis tick={{ fontSize: 10, fill: T.muted }} axisLine={false} tickLine={false} width={36} />
-                    <Tooltip content={<Tip />} />
-                    <Bar dataKey="avgEngagement" name="Avg engagement" fill={T.gold} radius={2} />
-                  </BarChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-          </Section>
 
         </>
       )}
