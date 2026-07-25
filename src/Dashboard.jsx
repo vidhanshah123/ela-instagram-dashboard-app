@@ -84,14 +84,14 @@ const VISUAL_REGISTRY = [
   { id: "follower-history", tab: "Overview", label: "Follower count history" },
   { id: "posting-streak", tab: "Overview", label: "Posting consistency" },
   { id: "whos-following", tab: "Overview", label: "Who's following" },
+  { id: "topics-table", tab: "Content", label: "Topics" },
+  { id: "top-performing-content", tab: "Content", label: "Top performing content" },
   { id: "skip-rate-leaderboard", tab: "Content", label: "Skip rate leaderboard" },
-  { id: "top-posts-new-followers", tab: "Content", label: "Top posts by new followers" },
-  { id: "watch-time-efficiency", tab: "Content", label: "Watch-time efficiency" },
   { id: "hashtag-performance", tab: "Content", label: "Hashtag performance" },
   { id: "duration-scatter", tab: "Content", label: "Reel duration vs. performance" },
   { id: "category-sparklines", tab: "Content", label: "Category trend sparklines (Topics table column)" },
   { id: "category-momentum", tab: "Content", label: "Category momentum (Topics table column)" },
-  { id: "underperformer-flag", tab: "Content", label: "Needs attention (underperformers)" },
+  { id: "underperformer-flag", tab: "Content", label: "Under performers" },
   { id: "category-matrix", tab: "Content", label: "Category × content type matrix" },
 ];
 
@@ -390,6 +390,45 @@ function Cover({ url, color }) {
   return <img src={url} onError={() => setErr(true)} style={{ width: "100%", height: "100%", objectFit: "cover" }} />;
 }
 function TypeIcon({ type, size = 10 }) { return type === "Reel" ? <Video size={size} /> : <ImageIcon size={size} />; }
+// Shared card used everywhere a piece of content needs a visual preview
+// (Top performing content, Skip rate leaderboard, Under performers) — cover
+// image, rank badge, type badge, topic (editable via onReassign, or a
+// static pill without it), and a one-line stat footer that each caller
+// controls via `footer`.
+function ContentCard({ p, rank, categories, onReassign, footer }) {
+  return (
+    <div style={{ background: T.surface, border: `1px solid ${T.line}`, ...facet(9), overflow: "hidden" }}>
+      <div style={{ height: 100, position: "relative", borderBottom: `1px solid ${T.line}` }}>
+        <Cover url={p.cover} color={p.topicColor} />
+        {rank != null && <span style={{ position: "absolute", top: 7, left: 7, fontSize: 10, fontWeight: 700, color: T.bg, background: T.gold, padding: "1px 6px" }}>#{rank}</span>}
+        <span style={{ position: "absolute", top: 7, right: 7, display: "flex", alignItems: "center", gap: 3, fontSize: 10, color: T.ivory, background: "rgba(0,0,0,0.5)", padding: "2px 6px" }}><TypeIcon type={p.contentType} size={9} />{p.contentType}</span>
+        {p.permalink && (
+          <a href={p.permalink} target="_blank" rel="noopener noreferrer" title="View on Instagram" style={{ position: "absolute", bottom: 7, right: 7, display: "flex", alignItems: "center", justifyContent: "center", width: 20, height: 20, borderRadius: "50%", background: "rgba(0,0,0,0.55)", color: T.ivory }}>
+            <ExternalLink size={10} />
+          </a>
+        )}
+      </div>
+      <div style={{ padding: "10px 11px 12px" }}>
+        <div style={{ fontSize: 11.5, color: T.ivory, marginBottom: 5, lineHeight: 1.35, height: 45, overflow: "hidden" }}>{p.caption}</div>
+        <div style={{ marginBottom: 8 }}>
+          {onReassign ? (
+            <select value={p.catId ?? ""} onChange={(e) => onReassign(p.id, e.target.value)} style={{ fontSize: 10.5, padding: "2px 6px", borderRadius: 3, background: `${p.topicColor}22`, color: p.topicColor, border: `1px solid ${p.topicColor}55`, cursor: "pointer" }}>
+              {categories.map((c) => <option key={c.id} value={c.id} style={{ background: T.surface, color: T.ivory }}>{c.name}</option>)}
+            </select>
+          ) : (
+            <span style={{ fontSize: 10.5, padding: "2px 7px", borderRadius: 3, background: `${p.topicColor}22`, color: p.topicColor }}>{p.topic}</span>
+          )}
+        </div>
+        <div style={{ display: "flex", gap: 9, fontSize: 10.5, color: T.muted, flexWrap: "wrap" }}>
+          <span style={{ display: "flex", alignItems: "center", gap: 3 }}><Heart size={10} color={T.gold} />{p.likes}</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 3 }}><MessageCircle size={10} />{p.comments}</span>
+          {p.plays && <span style={{ display: "flex", alignItems: "center", gap: 3 }}><Eye size={10} />{fmt(p.plays)}</span>}
+        </div>
+        <div style={{ fontSize: 10, color: T.muted, marginTop: 7, paddingTop: 7, borderTop: `1px solid ${T.line}` }}>{fmtDate(p.date)} · {footer}</div>
+      </div>
+    </div>
+  );
+}
 
 /* ============ URL STATE (shareable/bookmarkable filters) ============ */
 function readUrlParams() {
@@ -725,16 +764,6 @@ export default function Dashboard() {
     return { best: sorted.slice(0, 5), worst: sorted.slice(-5).reverse() };
   }, [reelsOnly]);
 
-  // Item 9: top posts by new followers (Posts only).
-  const topByNewFollowers = useMemo(() => {
-    return postsOnly.filter((p) => p.newFollowers).slice().sort((a, b) => b.newFollowers - a.newFollowers).slice(0, 5);
-  }, [postsOnly]);
-
-  // Item 10: watch-time efficiency scatter (Reels only).
-  const watchTimeScatter = useMemo(() => {
-    return reelsOnly.filter((p) => p.avgWatchTimeMs != null && p.totalWatchTimeMs != null).map((p) => ({ x: p.avgWatchTimeMs, y: p.totalWatchTimeMs, caption: p.caption }));
-  }, [reelsOnly]);
-
   // Item 11: hashtag performance — explode hashtags, average engagement per tag.
   const hashtagPerformance = useMemo(() => {
     const g = {};
@@ -912,16 +941,14 @@ export default function Dashboard() {
         </div>
       )}
 
-      {tab !== "overview" && (
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 26, background: T.surface, border: `1px solid ${T.line}`, padding: "11px 14px", ...facet(8) }}>
-          <Calendar size={13} color={T.gold} />
-          {presets.map(([k, l]) => <Chip key={k} active={preset === k} onClick={() => { setPreset(k); setRange(presetRange(k, MIN_DATE, MAX_DATE)); }}>{l}</Chip>)}
-          <div style={{ width: 1, height: 18, background: T.line, margin: "0 4px" }} />
-          <input type="date" value={range.start} min={MIN_DATE} max={range.end} onChange={(e) => { setPreset("custom"); setRange((r) => ({ ...r, start: e.target.value })); }} style={{ background: T.surface2, border: `1px solid ${T.line}`, color: T.ivory, padding: "5px 7px", fontSize: 11.5, fontFamily: "inherit" }} />
-          <span style={{ color: T.muted, fontSize: 11.5 }}>to</span>
-          <input type="date" value={range.end} min={range.start} max={MAX_DATE} onChange={(e) => { setPreset("custom"); setRange((r) => ({ ...r, end: e.target.value })); }} style={{ background: T.surface2, border: `1px solid ${T.line}`, color: T.ivory, padding: "5px 7px", fontSize: 11.5, fontFamily: "inherit" }} />
-        </div>
-      )}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 26, background: T.surface, border: `1px solid ${T.line}`, padding: "11px 14px", ...facet(8) }}>
+        <Calendar size={13} color={T.gold} />
+        {presets.map(([k, l]) => <Chip key={k} active={preset === k} onClick={() => { setPreset(k); setRange(presetRange(k, MIN_DATE, MAX_DATE)); }}>{l}</Chip>)}
+        <div style={{ width: 1, height: 18, background: T.line, margin: "0 4px" }} />
+        <input type="date" value={range.start} min={MIN_DATE} max={range.end} onChange={(e) => { setPreset("custom"); setRange((r) => ({ ...r, start: e.target.value })); }} style={{ background: T.surface2, border: `1px solid ${T.line}`, color: T.ivory, padding: "5px 7px", fontSize: 11.5, fontFamily: "inherit" }} />
+        <span style={{ color: T.muted, fontSize: 11.5 }}>to</span>
+        <input type="date" value={range.end} min={range.start} max={MAX_DATE} onChange={(e) => { setPreset("custom"); setRange((r) => ({ ...r, end: e.target.value })); }} style={{ background: T.surface2, border: `1px solid ${T.line}`, color: T.ivory, padding: "5px 7px", fontSize: 11.5, fontFamily: "inherit" }} />
+      </div>
 
       {tab === "overview" && (
         <>
@@ -1005,11 +1032,7 @@ export default function Dashboard() {
 
       {tab === "content" && (
         <>
-          <SectionHeader
-            eyebrow="Content strategy"
-            title="Topics"
-            note="Avg engagement = total interactions (likes + saves + comments + shares). Click a topic to see individual content."
-          />
+          <Section id="topics-table" eyebrow="Content strategy" title="Topics" insight="Avg engagement = total interactions (likes + saves + comments + shares)/number of content. Click a topic to see individual content." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
           <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
             <button onClick={() => setShowManage((s) => !s)} style={{ display: "flex", alignItems: "center", gap: 6, background: "transparent", border: `1px solid ${T.line}`, color: T.muted, padding: "6px 11px", fontSize: 11.5, cursor: "pointer", borderRadius: 3 }}>
               <Pencil size={11} /> Manage categories
@@ -1054,7 +1077,7 @@ export default function Dashboard() {
                 <Th label="Comments" sortKey="comments" sort={topicSort} setSort={setTopicSort} align="right" infoText={METRICS.find((m) => m.key === "comments").description} />
                 <Th label="Shares" sortKey="shares" sort={topicSort} setSort={setTopicSort} align="right" infoText={METRICS.find((m) => m.key === "shares").description} />
                 <Th label="Saves" sortKey="saves" sort={topicSort} setSort={setTopicSort} align="right" infoText={METRICS.find((m) => m.key === "saves").description} />
-                <Th label="Avg engagement (per item)" sortKey="avgEngagement" sort={topicSort} setSort={setTopicSort} align="right" infoText={METRICS.find((m) => m.key === "engagement").description} />
+                <Th label="Avg engagement" sortKey="avgEngagement" sort={topicSort} setSort={setTopicSort} align="right" infoText={METRICS.find((m) => m.key === "engagement").description} />
                 {!hiddenVisuals.includes("category-momentum") && (
                   <th style={{ padding: "10px 13px", textAlign: "right", whiteSpace: "nowrap" }}>
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>Momentum <HideControl id="category-momentum" confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide} label="the momentum column" /></span>
@@ -1124,100 +1147,36 @@ export default function Dashboard() {
               </tbody>
             </table>
           </div>
+          </Section>
 
-          <SectionHeader eyebrow="Content" title="Top performing content" note="Ranked by engagement score. Click a topic pill on any card to reassign it." />
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(215px, 1fr))", gap: 12 }}>
-            {topContent.map((p, i) => (
-              <div key={p.id} style={{ background: T.surface, border: `1px solid ${T.line}`, ...facet(9), overflow: "hidden" }}>
-                <div style={{ height: 100, position: "relative", borderBottom: `1px solid ${T.line}` }}>
-                  <Cover url={p.cover} color={p.topicColor} />
-                  <span style={{ position: "absolute", top: 7, left: 7, fontSize: 10, fontWeight: 700, color: T.bg, background: T.gold, padding: "1px 6px" }}>#{i + 1}</span>
-                  <span style={{ position: "absolute", top: 7, right: 7, display: "flex", alignItems: "center", gap: 3, fontSize: 10, color: T.ivory, background: "rgba(0,0,0,0.5)", padding: "2px 6px" }}><TypeIcon type={p.contentType} size={9} />{p.contentType}</span>
-                  {p.permalink && (
-                    <a href={p.permalink} target="_blank" rel="noopener noreferrer" title="View on Instagram" style={{ position: "absolute", bottom: 7, right: 7, display: "flex", alignItems: "center", justifyContent: "center", width: 20, height: 20, borderRadius: "50%", background: "rgba(0,0,0,0.55)", color: T.ivory }}>
-                      <ExternalLink size={10} />
-                    </a>
-                  )}
-                </div>
-                <div style={{ padding: "10px 11px 12px" }}>
-                  <div style={{ fontSize: 11.5, color: T.ivory, marginBottom: 5, lineHeight: 1.35, height: 45, overflow: "hidden" }}>{p.caption}</div>
-                  <div style={{ marginBottom: 8 }}>
-                    <select value={p.catId ?? ""} onChange={(e) => reassign(p.id, e.target.value)} style={{ fontSize: 10.5, padding: "2px 6px", borderRadius: 3, background: `${p.topicColor}22`, color: p.topicColor, border: `1px solid ${p.topicColor}55`, cursor: "pointer" }}>
-                      {categories.map((c) => <option key={c.id} value={c.id} style={{ background: T.surface, color: T.ivory }}>{c.name}</option>)}
-                    </select>
-                  </div>
-                  <div style={{ display: "flex", gap: 9, fontSize: 10.5, color: T.muted, flexWrap: "wrap" }}>
-                    <span style={{ display: "flex", alignItems: "center", gap: 3 }}><Heart size={10} color={T.gold} />{p.likes}</span>
-                    <span style={{ display: "flex", alignItems: "center", gap: 3 }}><MessageCircle size={10} />{p.comments}</span>
-                    {p.plays && <span style={{ display: "flex", alignItems: "center", gap: 3 }}><Eye size={10} />{fmt(p.plays)}</span>}
-                  </div>
-                  <div style={{ fontSize: 10, color: T.muted, marginTop: 7, paddingTop: 7, borderTop: `1px solid ${T.line}` }}>{fmtDate(p.date)} · Engagement {p.engagement}</div>
-                </div>
-              </div>
-            ))}
-          </div>
+          <Section id="top-performing-content" eyebrow="Content" title="Top performing content" insight="Ranked by engagement score. Click a topic pill on any card to reassign it." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(215px, 1fr))", gap: 12 }}>
+              {topContent.map((p, i) => (
+                <ContentCard key={p.id} p={p} rank={i + 1} categories={categories} onReassign={reassign} footer={`Engagement ${p.engagement}`} />
+              ))}
+            </div>
+          </Section>
 
           <Section id="skip-rate-leaderboard" eyebrow="Reels" title="Skip rate leaderboard" insight="Reels only. Lowest skip rate = best hooks (fewest people leaving in the first 3 seconds); highest = openings worth revisiting." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "14px 16px", ...facet(9) }}>
+              <div>
                 <div style={{ fontSize: 10.5, color: T.sage, marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Best hooks</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 10 }}>
                   {skipRateRanked.best.map((p) => (
-                    <div key={p.id} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12 }}>
-                      <span style={{ color: T.ivory, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{p.caption}</span>
-                      <span style={{ color: T.sage, fontWeight: 600, flexShrink: 0 }}>{p.reelsSkipRate}%</span>
-                    </div>
+                    <ContentCard key={p.id} p={p} categories={categories} footer={`Skip rate ${p.reelsSkipRate}%`} />
                   ))}
-                  {!skipRateRanked.best.length && <div style={{ fontSize: 11.5, color: T.muted }}>No skip-rate data yet.</div>}
                 </div>
+                {!skipRateRanked.best.length && <div style={{ fontSize: 11.5, color: T.muted }}>No skip-rate data yet.</div>}
               </div>
-              <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "14px 16px", ...facet(9) }}>
+              <div>
                 <div style={{ fontSize: 10.5, color: T.clay, marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Needs work</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 10 }}>
                   {skipRateRanked.worst.map((p) => (
-                    <div key={p.id} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12 }}>
-                      <span style={{ color: T.ivory, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{p.caption}</span>
-                      <span style={{ color: T.clay, fontWeight: 600, flexShrink: 0 }}>{p.reelsSkipRate}%</span>
-                    </div>
+                    <ContentCard key={p.id} p={p} categories={categories} footer={`Skip rate ${p.reelsSkipRate}%`} />
                   ))}
-                  {!skipRateRanked.worst.length && <div style={{ fontSize: 11.5, color: T.muted }}>No skip-rate data yet.</div>}
                 </div>
+                {!skipRateRanked.worst.length && <div style={{ fontSize: 11.5, color: T.muted }}>No skip-rate data yet.</div>}
               </div>
-            </div>
-          </Section>
-
-          <Section id="top-posts-new-followers" eyebrow="Posts" title="Top posts by new followers" insight="Posts only — Reels don't support follower attribution. Which specific posts drove the most new follows." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
-            <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "14px 16px", ...facet(9) }}>
-              <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-                {topByNewFollowers.map((p) => (
-                  <div key={p.id} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12 }}>
-                    <span style={{ color: T.ivory, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{p.caption}</span>
-                    <span style={{ color: T.gold, fontWeight: 600, flexShrink: 0 }}>+{p.newFollowers}</span>
-                  </div>
-                ))}
-                {!topByNewFollowers.length && <div style={{ fontSize: 11.5, color: T.muted }}>No posts with attributed new followers in this range yet.</div>}
-              </div>
-            </div>
-          </Section>
-
-          <Section id="watch-time-efficiency" eyebrow="Reels" title="Watch-time efficiency" insight="Average watch time (x) vs. total watch time (y) per Reel. Top-right = broad reach with strong retention. Bottom-right = a small but deeply engaged audience — a different kind of win the average alone hides." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
-            <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "16px 16px 6px", ...facet(10) }}>
-              {watchTimeScatter.length < 2 ? (
-                <div style={{ height: 200, display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: 12 }}>Not enough Reels with watch-time data yet.</div>
-              ) : (
-                <ResponsiveContainer width="100%" height={220}>
-                  <ScatterChart margin={{ left: 4, right: 12, bottom: 4 }}>
-                    <CartesianGrid stroke={T.line} />
-                    <XAxis type="number" dataKey="x" name="Avg watch time" unit="ms" tick={{ fontSize: 10, fill: T.muted }} axisLine={{ stroke: T.line }} tickLine={false} />
-                    <YAxis type="number" dataKey="y" name="Total watch time" unit="ms" tick={{ fontSize: 10, fill: T.muted }} axisLine={false} tickLine={false} width={50} />
-                    <ZAxis range={[60, 60]} />
-                    <Tooltip cursor={{ stroke: T.line }} content={({ active, payload }) => active && payload?.length ? (
-                      <div style={{ background: T.surface2, border: `1px solid ${T.gold}`, padding: "8px 10px", fontSize: 11, color: T.ivory, maxWidth: 200 }}>{payload[0].payload.caption}</div>
-                    ) : null} />
-                    <Scatter data={watchTimeScatter} fill={T.gold} fillOpacity={0.7} />
-                  </ScatterChart>
-                </ResponsiveContainer>
-              )}
             </div>
           </Section>
 
@@ -1256,21 +1215,13 @@ export default function Dashboard() {
             </div>
           </Section>
 
-          <Section id="underperformer-flag" eyebrow="Content strategy" title="Needs attention" insight="Content sitting below half its own category's average engagement — a relative bar, not a global one, so it's comparable across very different topics." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
-            <div style={{ background: T.surface, border: `1px solid ${T.line}`, padding: "14px 16px", ...facet(9) }}>
-              <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-                {underperformers.map((p) => (
-                  <div key={p.id} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12 }}>
-                    <span style={{ display: "flex", alignItems: "center", gap: 6, color: T.ivory, overflow: "hidden", minWidth: 0 }}>
-                      <span style={{ fontSize: 10.5, padding: "2px 7px", borderRadius: 3, background: `${p.topicColor}22`, color: p.topicColor, flexShrink: 0 }}>{p.topic}</span>
-                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{p.caption}</span>
-                    </span>
-                    <span style={{ color: T.muted, flexShrink: 0 }}>{p.engagement} <span style={{ fontSize: 10.5 }}>vs. {p.categoryAvg} avg</span></span>
-                  </div>
-                ))}
-                {!underperformers.length && <div style={{ fontSize: 11.5, color: T.muted }}>Nothing sitting notably below its category average right now.</div>}
-              </div>
+          <Section id="underperformer-flag" eyebrow="Content strategy" title="Under performers" insight="Content sitting below half its own category's average engagement — a relative bar, not a global one, so it's comparable across very different topics." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(215px, 1fr))", gap: 12 }}>
+              {underperformers.map((p) => (
+                <ContentCard key={p.id} p={p} categories={categories} footer={`Engagement ${p.engagement} vs. ${p.categoryAvg} avg`} />
+              ))}
             </div>
+            {!underperformers.length && <div style={{ fontSize: 11.5, color: T.muted }}>Nothing sitting notably below its category average right now.</div>}
           </Section>
 
           <Section id="category-matrix" eyebrow="Content strategy" title="Category × content type" insight="Average engagement per category, split by Reel vs. Post — shows which topics work better in which format." hiddenVisuals={hiddenVisuals} confirmHideId={confirmHideId} onRequestHide={requestHide} onConfirmHide={confirmHide} onCancelHide={cancelHide}>
