@@ -12,6 +12,7 @@ import {
   EyeOff, Flame,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
+import WeeklyTab from "./WeeklyTab";
 
 const T = {
   bg: "#0F1E1A", surface: "#152720", surface2: "#1B3128", line: "#2A3F35",
@@ -771,7 +772,7 @@ export default function Dashboard() {
           {lastSynced && <div style={{ color: T.muted, fontSize: 10.5, marginTop: 3 }}>Data last synced {fmtDateTime(lastSynced)}</div>}
         </div>
         <div style={{ display: "flex", gap: 3, background: T.surface, border: `1px solid ${T.line}`, padding: 3, ...facet(6) }}>
-          {[["overview", "Overview"], ["content", "Content"]].map(([k, l]) => (
+          {[["overview", "Overview"], ["content", "Content"], ["weekly", "Weekly"]].map(([k, l]) => (
             <button key={k} onClick={() => setTab(k)} style={{ border: "none", cursor: "pointer", padding: "7px 15px", fontSize: 12, fontWeight: 600, background: tab === k ? T.gold : "transparent", color: tab === k ? T.bg : T.muted }}>{l}</button>
           ))}
         </div>
@@ -797,13 +798,14 @@ export default function Dashboard() {
         </div>
       )}
 
-      {tab !== "overview" && (
+      {tab === "content" && (
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 26 }}>
           <span style={{ fontSize: 11, color: T.muted }}>Content type:</span>
           {["All", "Reel", "Post"].map((t) => <Chip key={t} active={typeFilter === t} onClick={() => setTypeFilter(t)}>{t}</Chip>)}
         </div>
       )}
 
+      {tab !== "weekly" && (
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 26, background: T.surface, border: `1px solid ${T.line}`, padding: "11px 14px", ...facet(8) }}>
         <Calendar size={13} color={T.gold} />
         {presets.map(([k, l]) => <Chip key={k} active={preset === k} onClick={() => { setPreset(k); setRange(presetRange(k, MIN_DATE, MAX_DATE)); }}>{l}</Chip>)}
@@ -812,6 +814,7 @@ export default function Dashboard() {
         <span style={{ color: T.muted, fontSize: 11.5 }}>to</span>
         <input type="date" value={range.end} min={range.start} max={MAX_DATE} onChange={(e) => { setPreset("custom"); setRange((r) => ({ ...r, end: e.target.value })); }} style={{ background: T.surface2, border: `1px solid ${T.line}`, color: T.ivory, padding: "5px 7px", fontSize: 11.5, fontFamily: "inherit" }} />
       </div>
+      )}
 
       {tab === "overview" && (
         <>
@@ -1068,6 +1071,8 @@ export default function Dashboard() {
           </Section>
         </>
       )}
+
+      {tab === "weekly" && <WeeklyTab />}
 
     </div>
     </TooltipProvider>
